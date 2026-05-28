@@ -181,22 +181,27 @@ def fetch_projects() -> list[dict]:
 
 # ── 빌링 상태 (SDK) ───────────────────────────────────────────────────
 def _check_billing(pid: str, client: billing_v1.CloudBillingClient) -> dict:
-    _BILLING_LIM.acquire()   # 500 req/min 이하로 속도 제한
-    try:
-        info = client.get_project_billing_info(
-            name=f"projects/{pid}", timeout=15, retry=None
-        )
-        bid = ""
-        if info.billing_account_name:
-            bid = info.billing_account_name.replace("billingAccounts/", "")
-        return {
-            "billing_enabled":    "True" if info.billing_enabled else "False",
-            "billing_account_id": bid,
-        }
-    except (api_errors.PermissionDenied, api_errors.NotFound):
-        return {"billing_enabled": "False", "billing_account_id": ""}
-    except Exception:
-        return {"billing_enabled": "False", "billing_account_id": ""}
+    """프로젝트 빌링 정보 조회. 일시적 오류 시 최대 3회 재시도(5s 간격)."""
+    for attempt in range(3):
+        if attempt:
+            time.sleep(5)          # 재시도 전 5초 대기 (서비스 복구 시간 확보)
+        _BILLING_LIM.acquire()     # 재시도도 레이트 리미터 통과
+        try:
+            info = client.get_project_billing_info(
+                name=f"projects/{pid}", timeout=15, retry=None
+            )
+            bid = info.billing_account_name.replace("billingAccounts/", "") \
+                  if info.billing_account_name else ""
+            return {
+                "billing_enabled":    "True" if info.billing_enabled else "False",
+                "billing_account_id": bid,
+            }
+        except (api_errors.PermissionDenied, api_errors.NotFound):
+            # 영구 오류(권한 없음 / 프로젝트 없음) → 재시도 불필요
+            return {"billing_enabled": "False", "billing_account_id": ""}
+        except Exception:
+            pass    # 일시적 오류 → 루프 계속 (재시도)
+    return {"billing_enabled": "False", "billing_account_id": ""}
 
 
 # ── 소유자 조회 (SDK) ─────────────────────────────────────────────────
@@ -217,27 +222,31 @@ def _is_system_sa(member: str) -> bool:
 
 
 def _get_owners(pid: str, client: resourcemanager_v3.ProjectsClient) -> list[str]:
-    """roles/owner + roles/editor 중 비시스템 멤버 반환.
+    """roles/owner + roles/editor 중 비시스템 멤버 반환. 일시적 오류 시 최대 3회 재시도.
 
     roles/owner만 보면 App Engine 기본 SA 등 editor 레벨 실사용자를 놓침.
     단, GCP 자동 생성 시스템 SA(service-숫자@, 숫자@)는 제외.
     """
-    _OWNER_LIM.acquire()     # 500 req/min 이하로 속도 제한
-    try:
-        policy = client.get_iam_policy(
-            resource=f"projects/{pid}", timeout=15, retry=None
-        )
-        members: list[str] = []
-        for binding in policy.bindings:
-            if binding.role in ("roles/owner", "roles/editor"):
-                for m in binding.members:
-                    if not _is_system_sa(m):
-                        members.append(m)
-        return list(dict.fromkeys(members))  # 순서 유지 + 중복 제거
-    except (api_errors.PermissionDenied, api_errors.NotFound):
-        return []
-    except Exception:
-        return []
+    for attempt in range(3):
+        if attempt:
+            time.sleep(5)
+        _OWNER_LIM.acquire()
+        try:
+            policy = client.get_iam_policy(
+                resource=f"projects/{pid}", timeout=15, retry=None
+            )
+            members: list[str] = []
+            for binding in policy.bindings:
+                if binding.role in ("roles/owner", "roles/editor"):
+                    for m in binding.members:
+                        if not _is_system_sa(m):
+                            members.append(m)
+            return list(dict.fromkeys(members))  # 순서 유지 + 중복 제거
+        except (api_errors.PermissionDenied, api_errors.NotFound):
+            return []
+        except Exception:
+            pass
+    return []
 
 
 # ── 빌링 계정 정보 (SDK) ──────────────────────────────────────────────
@@ -441,9 +450,8 @@ def full_scan(on_progress) -> list[dict]:
             except Exception:
                 pass
 
-    # Stage 3 – 사전 조회에서 못 가져온 빌링 계정 보완
-    # (Stage 2 quota 소진 후이므로 적은 수만 개별 조회 시도)
-    on_progress(93, "빌링 계정 정보 보완 중...", 0, 0)
+    # Stage 3 – 사전 조회에서 못 가져온 빌링 계정 OPEN/CLOSED 보완
+    on_progress(90, "빌링 계정 OPEN/CLOSED 보완 중...", 0, 0)
     bid_set = {v["billing_account_id"] for v in billing_map.values() if v["billing_account_id"]}
     missing_bids = bid_set - set(account_cache.keys())
     if missing_bids:
@@ -453,6 +461,27 @@ def full_scan(on_progress) -> list[dict]:
                 info = f.result()
                 if info["name"] or info["open"]:
                     account_cache[futs[f]] = info
+
+    # Stage 4 – 실패 프로젝트 보완 패스
+    # Stage 2의 3회 재시도에도 불구하고 빈 값으로 남은 프로젝트를 개별 순차 재조회.
+    # (네트워크 일시 장애, gRPC 채널 오류 등 극히 드문 경우를 위한 최후 안전망)
+    failed_billing = [pid for pid, v in billing_map.items()
+                      if v["billing_enabled"] == "False" and not v["billing_account_id"]]
+    failed_owners  = [pid for pid in owner_map if not owner_map[pid]]
+
+    retry_pids = list(dict.fromkeys(failed_billing + failed_owners))
+    if retry_pids:
+        on_progress(93, f"실패 프로젝트 재조회 중... ({len(retry_pids)}개)", 0, 0)
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            b_futs = {ex.submit(_check_billing, pid, s3_client): pid for pid in failed_billing}
+            o_futs = {ex.submit(_get_owners,    pid, rm_clients[0]): pid for pid in failed_owners}
+            for f in as_completed({**b_futs, **o_futs}):
+                pid = (b_futs if f in b_futs else o_futs)[f]
+                res = f.result()
+                if f in b_futs and (res["billing_account_id"] or res["billing_enabled"] == "True"):
+                    billing_map[pid] = res
+                elif f in o_futs and res:
+                    owner_map[pid] = res
 
     # 결과 조합
     on_progress(95, "데이터 조합 중...", 0, 0)
