@@ -191,7 +191,12 @@ def fetch_projects() -> list[dict]:
 
 # ── 빌링 상태 (SDK) ───────────────────────────────────────────────────
 def _check_billing(pid: str, client: billing_v1.CloudBillingClient) -> dict:
-    """프로젝트 빌링 정보 조회. 일시적 오류 시 최대 3회 재시도(5s 간격)."""
+    """프로젝트 빌링 정보 조회. 일시적 오류 시 최대 3회 재시도(5s 간격).
+
+    반환 dict의 `_failed` 키:
+      False → 정상 응답(빌링 없음 포함) 또는 영구 오류(권한 없음) → Stage 4 재시도 불필요
+      True  → 3회 모두 일시적 예외 → Stage 4 재시도 대상
+    """
     for attempt in range(3):
         if attempt:
             time.sleep(5)          # 재시도 전 5초 대기 (서비스 복구 시간 확보)
@@ -205,13 +210,14 @@ def _check_billing(pid: str, client: billing_v1.CloudBillingClient) -> dict:
             return {
                 "billing_enabled":    "True" if info.billing_enabled else "False",
                 "billing_account_id": bid,
+                "_failed":            False,
             }
         except (api_errors.PermissionDenied, api_errors.NotFound):
             # 영구 오류(권한 없음 / 프로젝트 없음) → 재시도 불필요
-            return {"billing_enabled": "False", "billing_account_id": ""}
+            return {"billing_enabled": "False", "billing_account_id": "", "_failed": False}
         except Exception:
             pass    # 일시적 오류 → 루프 계속 (재시도)
-    return {"billing_enabled": "False", "billing_account_id": ""}
+    return {"billing_enabled": "False", "billing_account_id": "", "_failed": True}
 
 
 # ── 소유자 조회 (SDK) ─────────────────────────────────────────────────
@@ -231,8 +237,14 @@ def _is_system_sa(member: str) -> bool:
     return bool(re.match(r"^service-\d+$", prefix) or re.match(r"^\d+$", prefix))
 
 
-def _get_owners(pid: str, client: resourcemanager_v3.ProjectsClient) -> list[str]:
+_OWNERS_FAILED = object()   # 일시적 오류로 3회 모두 실패한 경우의 sentinel
+
+def _get_owners(pid: str, client: resourcemanager_v3.ProjectsClient):
     """roles/owner + roles/editor 중 비시스템 멤버 반환. 일시적 오류 시 최대 3회 재시도.
+
+    반환:
+      list[str]      → 정상 응답 (빈 리스트 포함) 또는 영구 오류(권한 없음)
+      _OWNERS_FAILED → 3회 모두 일시적 예외 → Stage 4 재시도 대상
 
     roles/owner만 보면 App Engine 기본 SA 등 editor 레벨 실사용자를 놓침.
     단, GCP 자동 생성 시스템 SA(service-숫자@, 숫자@)는 제외.
@@ -256,7 +268,7 @@ def _get_owners(pid: str, client: resourcemanager_v3.ProjectsClient) -> list[str
             return []
         except Exception:
             pass
-    return []
+    return _OWNERS_FAILED
 
 
 # ── 빌링 계정 정보 (SDK) ──────────────────────────────────────────────
@@ -473,11 +485,14 @@ def full_scan(on_progress) -> list[dict]:
                     account_cache[futs[f]] = info
 
     # Stage 4 – 실패 프로젝트 보완 패스
-    # Stage 2의 3회 재시도에도 불구하고 빈 값으로 남은 프로젝트를 개별 순차 재조회.
-    # (네트워크 일시 장애, gRPC 채널 오류 등 극히 드문 경우를 위한 최후 안전망)
-    failed_billing = [pid for pid, v in billing_map.items()
-                      if v["billing_enabled"] == "False" and not v["billing_account_id"]]
-    failed_owners  = [pid for pid in owner_map if not owner_map[pid]]
+    # Stage 2의 3회 재시도에도 불구하고 일시적 오류로 실패한 프로젝트만 재조회.
+    # (빌링 미연결 / 권한 없음 등 정상 응답은 재시도 불필요 → _failed 플래그로 구분)
+    failed_billing = [pid for pid, v in billing_map.items() if v.get("_failed")]
+    failed_owners  = [pid for pid, v in owner_map.items() if v is _OWNERS_FAILED]
+
+    # owner_map에 sentinel이 남아 있으면 빈 리스트로 초기화 (결과 조합 단계에서 안전하게 처리)
+    for pid in failed_owners:
+        owner_map[pid] = []
 
     retry_pids = list(dict.fromkeys(failed_billing + failed_owners))
     if retry_pids:
@@ -488,9 +503,9 @@ def full_scan(on_progress) -> list[dict]:
             for f in as_completed({**b_futs, **o_futs}):
                 pid = (b_futs if f in b_futs else o_futs)[f]
                 res = f.result()
-                if f in b_futs and (res["billing_account_id"] or res["billing_enabled"] == "True"):
-                    billing_map[pid] = res
-                elif f in o_futs and res:
+                if f in b_futs:
+                    billing_map[pid] = res   # _failed 포함하지만 결과 조합 시 무시됨
+                elif f in o_futs and res is not _OWNERS_FAILED:
                     owner_map[pid] = res
 
     # 결과 조합
