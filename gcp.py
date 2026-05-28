@@ -3,6 +3,7 @@ import json
 import re
 import subprocess
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -12,13 +13,46 @@ from google.api_core import exceptions as api_errors
 import google.auth
 import google.auth.transport.requests
 
-# ── API rate limiter (quota: 700 req/min per project) ────────────────
-# billing API (get_project_billing_info, list_billing_accounts, get_billing_account)
-# 와 IAM API (get_iam_policy) 모두 동일 quota 공유.
-# max_workers=200 으로 한꺼번에 요청하면 quota 초과 → gRPC retry로 10분 걸림.
-# Semaphore(25): 25개씩 순차 처리 → 약 150 req/s 이하로 유지.
-_BILLING_SEM = threading.Semaphore(12)   # cloudbilling API: ~700 req/min quota
-_OWNER_SEM   = threading.Semaphore(10)   # resourcemanager getIamPolicy: ~600 req/min quota
+
+# ── 토큰 버킷 레이트 리미터 ────────────────────────────────────────────
+# [문제] Semaphore(N)은 동시 요청 수만 제한하고 '초당 요청 수'는 제어 못함.
+#        API 응답이 0.3s이면 Semaphore(12) = 40 req/s = 2400 req/min
+#        → 쿼터(700/min) 3배 초과 → 일부 호출 무작위 실패 → 스캔마다 결과 달라짐
+#
+# [해결] 토큰 버킷으로 '분당 요청 수'를 정확히 제어.
+#        acquire()가 필요한 만큼 sleep 후 반환 → 항상 쿼터 이하 유지.
+#
+# 스캔 소요 시간 추정 (780 프로젝트):
+#   빌링 조회: 780 / 500 * 60 ≈ 94s
+#   IAM 조회:  780 / 500 * 60 ≈ 94s  (동시 실행)
+#   총 스캔:   ≈ 100~120s (약 2분)  — 쿼터 초과 없이 안정적
+class _TokenBucketLimiter:
+    """스레드 안전 토큰 버킷 레이트 리미터.
+
+    acquire() 는 다음 허용 시각까지 sleep 한 뒤 반환한다.
+    여러 스레드가 동시에 호출하면 순서대로 슬롯을 배정받아 대기한다.
+    """
+    def __init__(self, rate_per_minute: int) -> None:
+        self._interval: float = 60.0 / rate_per_minute
+        self._lock = threading.Lock()
+        self._next_allowed: float = 0.0
+
+    def acquire(self) -> None:
+        while True:
+            with self._lock:
+                now = time.monotonic()
+                if now >= self._next_allowed:
+                    self._next_allowed = now + self._interval
+                    return
+                wait = self._next_allowed - now
+                self._next_allowed += self._interval
+            time.sleep(wait)
+
+
+# Cloud Billing API: 쿼터 ~700 req/min → 500 req/min 제한 (여유 200/min)
+_BILLING_LIM = _TokenBucketLimiter(500)
+# Resource Manager getIamPolicy: 쿼터 ~600 req/min → 500 req/min 제한
+_OWNER_LIM   = _TokenBucketLimiter(500)
 
 # ── gcloud (auth 표시 및 리소스 스캔용으로만 유지) ─────────────────────
 _GCLOUD_CANDIDATES = [
@@ -73,7 +107,6 @@ def get_auth_info() -> dict | None:
 # ── SDK 인증: ADC 우선, 실패 시 gcloud 토큰 폴백 ─────────────────────
 def _get_credentials():
     global _creds_cache, _creds_cache_ts
-    import time as _time
     with _creds_lock:
         # ADC credentials: 자체 expired 속성으로 판단
         # gcloud 토큰: expired 속성이 없으므로 발급 시각 기반 TTL로 판단
@@ -87,7 +120,7 @@ def _get_credentials():
                         return _creds_cache
                 else:
                     # gcloud 토큰: 50분 TTL
-                    if _time.time() - _creds_cache_ts < _GCLOUD_TOKEN_TTL:
+                    if time.time() - _creds_cache_ts < _GCLOUD_TOKEN_TTL:
                         return _creds_cache
             except Exception:
                 pass
@@ -119,7 +152,7 @@ def _get_credentials():
             scopes=["https://www.googleapis.com/auth/cloud-platform"],
         )
         _creds_cache = creds
-        _creds_cache_ts = _time.time()   # 발급 시각 기록 → 50분 후 자동 재발급
+        _creds_cache_ts = time.time()    # 발급 시각 기록 → 50분 후 자동 재발급
         return creds
 
 
@@ -148,23 +181,22 @@ def fetch_projects() -> list[dict]:
 
 # ── 빌링 상태 (SDK) ───────────────────────────────────────────────────
 def _check_billing(pid: str, client: billing_v1.CloudBillingClient) -> dict:
-    with _BILLING_SEM:
-        try:
-            # retry=None: quota 초과 시 자동 retry(최대 600s) 방지 → 즉시 실패
-            info = client.get_project_billing_info(
-                name=f"projects/{pid}", timeout=15, retry=None
-            )
-            bid = ""
-            if info.billing_account_name:
-                bid = info.billing_account_name.replace("billingAccounts/", "")
-            return {
-                "billing_enabled":    "True" if info.billing_enabled else "False",
-                "billing_account_id": bid,
-            }
-        except (api_errors.PermissionDenied, api_errors.NotFound):
-            return {"billing_enabled": "False", "billing_account_id": ""}
-        except Exception:
-            return {"billing_enabled": "False", "billing_account_id": ""}
+    _BILLING_LIM.acquire()   # 500 req/min 이하로 속도 제한
+    try:
+        info = client.get_project_billing_info(
+            name=f"projects/{pid}", timeout=15, retry=None
+        )
+        bid = ""
+        if info.billing_account_name:
+            bid = info.billing_account_name.replace("billingAccounts/", "")
+        return {
+            "billing_enabled":    "True" if info.billing_enabled else "False",
+            "billing_account_id": bid,
+        }
+    except (api_errors.PermissionDenied, api_errors.NotFound):
+        return {"billing_enabled": "False", "billing_account_id": ""}
+    except Exception:
+        return {"billing_enabled": "False", "billing_account_id": ""}
 
 
 # ── 소유자 조회 (SDK) ─────────────────────────────────────────────────
@@ -190,22 +222,22 @@ def _get_owners(pid: str, client: resourcemanager_v3.ProjectsClient) -> list[str
     roles/owner만 보면 App Engine 기본 SA 등 editor 레벨 실사용자를 놓침.
     단, GCP 자동 생성 시스템 SA(service-숫자@, 숫자@)는 제외.
     """
-    with _OWNER_SEM:
-        try:
-            policy = client.get_iam_policy(
-                resource=f"projects/{pid}", timeout=15, retry=None
-            )
-            members: list[str] = []
-            for binding in policy.bindings:
-                if binding.role in ("roles/owner", "roles/editor"):
-                    for m in binding.members:
-                        if not _is_system_sa(m):
-                            members.append(m)
-            return list(dict.fromkeys(members))  # 순서 유지 + 중복 제거
-        except (api_errors.PermissionDenied, api_errors.NotFound):
-            return []
-        except Exception:
-            return []
+    _OWNER_LIM.acquire()     # 500 req/min 이하로 속도 제한
+    try:
+        policy = client.get_iam_policy(
+            resource=f"projects/{pid}", timeout=15, retry=None
+        )
+        members: list[str] = []
+        for binding in policy.bindings:
+            if binding.role in ("roles/owner", "roles/editor"):
+                for m in binding.members:
+                    if not _is_system_sa(m):
+                        members.append(m)
+        return list(dict.fromkeys(members))  # 순서 유지 + 중복 제거
+    except (api_errors.PermissionDenied, api_errors.NotFound):
+        return []
+    except Exception:
+        return []
 
 
 # ── 빌링 계정 정보 (SDK) ──────────────────────────────────────────────
