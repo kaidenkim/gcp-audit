@@ -255,6 +255,9 @@ tr:hover td{background:#fafbfd;}
       <div class="controls">
         <input id="search" class="ctrl-input" type="text" placeholder="🔍 ID, 이름, 소유자, 빌링 검색..." oninput="applyFilters()">
         <select id="fYear" class="ctrl-select" onchange="applyFilters()"><option value="">전체 연도</option></select>
+        <select id="fBillingAccount" class="ctrl-select" onchange="applyFilters()" style="max-width:200px">
+          <option value="">전체 빌링 계정</option>
+        </select>
         <select id="fBilling" class="ctrl-select" onchange="applyFilters()">
           <option value="">전체 빌링 연결</option>
           <option value="connected">연결됨</option>
@@ -733,6 +736,7 @@ async function init() {
 function setProjectData(projects) {
   ALL = projects;
   buildYearFilter();
+  buildBillingAccountFilter();
   applyFilters();
 }
 
@@ -743,16 +747,63 @@ function buildYearFilter() {
   years.forEach(y=>{const o=document.createElement('option');o.value=y;o.textContent=y+'년';sel.appendChild(o);});
 }
 
+function buildBillingAccountFilter() {
+  // billing_account_id → {name, count} 집계
+  const map=new Map(); // key: billing_account_id
+  ALL.forEach(p=>{
+    if(!p.billing_account_id) return;
+    if(!map.has(p.billing_account_id)){
+      map.set(p.billing_account_id, {name:p.billing_account_name||'', count:0});
+    }
+    map.get(p.billing_account_id).count++;
+  });
+
+  // 계정명 기준 정렬 (없으면 ID 기준)
+  const entries=[...map.entries()].sort((a,b)=>{
+    const na=a[1].name||a[0], nb=b[1].name||b[0];
+    return na.localeCompare(nb,'ko');
+  });
+
+  const sel=document.getElementById('fBillingAccount');
+  const cur=sel.value;
+  sel.innerHTML='<option value="">전체 빌링 계정</option>';
+
+  // 미연결 항목 수 카운트
+  const unlinked=ALL.filter(p=>!p.billing_account_id).length;
+  if(unlinked>0){
+    const o=document.createElement('option');
+    o.value='__none__';
+    o.textContent=`미연결 (${unlinked.toLocaleString()}개)`;
+    sel.appendChild(o);
+  }
+
+  entries.forEach(([id,info])=>{
+    const o=document.createElement('option');
+    o.value=id;
+    const label=info.name ? `${info.name} (${info.count.toLocaleString()}개)` : `${id} (${info.count.toLocaleString()}개)`;
+    o.textContent=label;
+    if(id===cur) o.selected=true;
+    sel.appendChild(o);
+  });
+
+  // 이전 선택값 복원
+  if(cur) sel.value=cur;
+}
+
 function applyFilters() {
   const q=document.getElementById('search').value.toLowerCase();
   const yr=document.getElementById('fYear').value;
+  const ba=document.getElementById('fBillingAccount').value;
   const bi=document.getElementById('fBilling').value;
   const dl=document.getElementById('fDeletable').value;
   const ab=parseInt(document.getElementById('fAbandoned').value||'0');
   FILTERED=ALL.filter(p=>{
     if(q&&!([p.project_id,p.name,...(p.owners||[]),p.billing_account_name,p.billing_account_id].join(' ').toLowerCase().includes(q)))return false;
     if(yr&&!p.create_time.startsWith(yr))return false;
-    // connected: billing_enabled=True OR billing_account_id 있음(CLOSED 포함)
+    // 빌링 계정 필터
+    if(ba==='__none__'&&p.billing_account_id)return false;       // 미연결만
+    if(ba&&ba!=='__none__'&&p.billing_account_id!==ba)return false; // 특정 계정만
+    // 빌링 연결 상태 필터
     if(bi==='connected'&&p.billing_enabled!=='True'&&!p.billing_account_id)return false;
     if(bi==='OPEN'&&!(p.billing_enabled==='True'&&p.billing_open==='True'))return false;
     // CLOSED: billing_open=False(활성 계정 CLOSED) OR billing_enabled=False이지만 billing_account_id 있음
@@ -798,7 +849,7 @@ function filterAbandoned() {
 }
 
 function resetFilters() {
-  ['search','fYear','fBilling','fDeletable','fAbandoned'].forEach(id=>document.getElementById(id).value='');
+  ['search','fYear','fBillingAccount','fBilling','fDeletable','fAbandoned'].forEach(id=>document.getElementById(id).value='');
   document.querySelectorAll('.card').forEach(c=>c.classList.remove('active-filter'));
   applyFilters();
 }
