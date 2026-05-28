@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# GCP 감사 캐시 파일 (민감 데이터 포함)
+~/.gcp_audit_cache.json
+.gcp_audit_cache.json
+*.gcp_audit_*.json
+
+# 인증 관련
+*.json
+!requirements.txt
+service-account*.json
+credentials*.json
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Claude Code
+.claude/

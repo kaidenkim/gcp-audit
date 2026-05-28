@@ -1,0 +1,1881 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GCP Project Auditor</title>
+<style>
+:root {
+  --primary:#1a73e8; --primary-dk:#1557b0;
+  --nav:#1a1f36; --bg:#f1f3f4; --surface:#fff;
+  --border:#dadce0; --text:#202124; --t2:#5f6368; --t3:#9aa0a6;
+  --green-bg:#e6f4ea; --green:#137333;
+  --red-bg:#fce8e6;   --red:#b31412;
+  --yel-bg:#fef7e0;   --yel:#b06000;
+  --blue-bg:#e8f0fe;  --blue:#1967d2;
+  --orange-bg:#fff3e0;--orange:#e65100;
+  --purple-bg:#f3e5f5;--purple:#7b1fa2;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:Arial,sans-serif;background:var(--bg);color:var(--text);font-size:14px;}
+
+/* ── Header ─────────────────────────────────────────────────────── */
+header{background:var(--nav);height:60px;display:flex;align-items:center;padding:0 24px;position:sticky;top:0;z-index:100;box-shadow:0 2px 8px rgba(0,0,0,.3);gap:16px;}
+.logo{font-size:18px;font-weight:700;color:#fff;display:flex;align-items:center;gap:6px;white-space:nowrap;}
+.logo-gcp{color:#4285f4;}.logo-dot{color:#ea4335;}
+.header-meta{font-size:12px;color:var(--t3);margin-left:4px;white-space:nowrap;}
+.page-nav{display:flex;gap:4px;margin:0 auto;}
+.pnav-btn{background:rgba(255,255,255,.08);color:rgba(255,255,255,.7);border:1px solid rgba(255,255,255,.15);padding:7px 18px;border-radius:20px;cursor:pointer;font-size:13px;font-weight:500;transition:all .15s;}
+.pnav-btn:hover{background:rgba(255,255,255,.15);color:#fff;}
+.pnav-btn.active{background:var(--primary);color:#fff;border-color:var(--primary);}
+.header-right{display:flex;align-items:center;gap:10px;white-space:nowrap;}
+.last-tag{font-size:11px;color:var(--t3);}
+.scan-btn{background:var(--primary);color:#fff;border:none;padding:9px 20px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;transition:background .15s;display:flex;align-items:center;gap:6px;}
+.scan-btn:hover:not(:disabled){background:var(--primary-dk);}
+.scan-btn:disabled{background:#5f6368;cursor:not-allowed;}
+
+/* ── Tab bar ─────────────────────────────────────────────────────── */
+.tab-bar{background:var(--nav);display:flex;padding:0 24px;border-top:1px solid rgba(255,255,255,.08);}
+.tab-btn{color:rgba(255,255,255,.6);padding:12px 20px;border:none;background:none;cursor:pointer;font-size:13px;font-weight:500;border-bottom:3px solid transparent;transition:color .15s,border-color .15s;}
+.tab-btn:hover{color:#fff;}
+.tab-btn.active{color:#fff;border-bottom-color:#4285f4;}
+
+/* ── Page content ────────────────────────────────────────────────── */
+.page-content{display:none;}
+.page-content.active{display:block;}
+main{max-width:1600px;margin:0 auto;padding:24px;}
+.tab-panel{display:none;}.tab-panel.show{display:block;}
+
+/* ── Cards ───────────────────────────────────────────────────────── */
+.cards{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:20px;}
+.card{background:var(--surface);border-radius:10px;padding:18px 20px;box-shadow:0 1px 4px rgba(0,0,0,.08);border-left:5px solid;cursor:pointer;transition:box-shadow .15s,transform .1s;}
+.card:hover{box-shadow:0 4px 12px rgba(0,0,0,.12);transform:translateY(-1px);}
+.card.active-filter{outline:2px solid var(--primary);}
+.card-total{border-color:#4285f4;}.card-ok{border-color:#34a853;}
+.card-billing{border-color:#ea4335;}.card-owner{border-color:#fbbc04;}
+.card-abandoned{border-color:#e65100;}
+.card-num{font-size:32px;font-weight:700;line-height:1;}
+.card-total .card-num{color:#1967d2;}.card-ok .card-num{color:#137333;}
+.card-billing .card-num{color:#b31412;}.card-owner .card-num{color:#b06000;}
+.card-abandoned .card-num{color:#e65100;}
+.card-label{font-size:12px;color:var(--t2);margin-top:6px;}
+
+/* ── Resource summary cards ─────────────────────────────────────── */
+.res-section{margin-bottom:16px;}
+.res-section-label{font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;}
+.res-cards{display:grid;gap:10px;margin-bottom:8px;}
+.res-cards-4{grid-template-columns:repeat(4,1fr);}
+.res-cards-3{grid-template-columns:repeat(3,1fr);}
+.res-cards-1{grid-template-columns:repeat(1,1fr);}
+.res-card{background:var(--surface);border-radius:10px;padding:14px 16px;box-shadow:0 1px 4px rgba(0,0,0,.08);text-align:center;}
+.res-card-icon{font-size:20px;margin-bottom:4px;}
+.res-card-num{font-size:22px;font-weight:700;color:var(--primary);}
+.res-card-label{font-size:11px;color:var(--t2);margin-top:2px;}
+
+/* ── Progress ────────────────────────────────────────────────────── */
+.progress-wrap{background:var(--surface);border-radius:10px;padding:18px 24px;margin-bottom:20px;box-shadow:0 1px 4px rgba(0,0,0,.08);display:none;}
+.progress-wrap.show{display:block;}
+.progress-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;}
+.progress-pct{font-weight:700;font-size:16px;}
+.progress-stage{font-size:13px;color:var(--t2);}
+.progress-track{background:#e8eaed;border-radius:99px;height:8px;}
+.progress-fill{background:var(--primary);height:100%;border-radius:99px;transition:width .3s ease;}
+.progress-detail{font-size:12px;color:var(--t3);margin-top:6px;}
+
+/* ── Controls ────────────────────────────────────────────────────── */
+.controls{background:var(--surface);border-radius:10px;padding:12px 18px;margin-bottom:16px;box-shadow:0 1px 4px rgba(0,0,0,.08);display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+.ctrl-input,.ctrl-select{border:1px solid var(--border);border-radius:6px;padding:7px 10px;font-size:13px;outline:none;background:#fff;color:var(--text);}
+.ctrl-input{width:200px;}.ctrl-input:focus,.ctrl-select:focus{border-color:var(--primary);}
+.ctrl-select{cursor:pointer;}
+.ctrl-sep{flex:1;}
+.reset-btn{background:none;border:1px solid var(--border);border-radius:6px;padding:7px 12px;cursor:pointer;font-size:13px;color:var(--t2);}
+.reset-btn:hover{background:var(--bg);}
+.action-btn{color:#fff;border:none;padding:7px 16px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;text-decoration:none;display:flex;align-items:center;gap:6px;}
+.action-btn.green{background:#34a853;}.action-btn.green:hover{background:#2d9249;}
+.action-btn.blue{background:var(--primary);}.action-btn.blue:hover:not(:disabled){background:var(--primary-dk);}
+.action-btn.orange{background:#f57c00;}.action-btn.orange:hover:not(:disabled){background:#e65100;}
+.action-btn.red{background:#d93025;}.action-btn.red:hover{background:#b3261e;}
+.action-btn:disabled{background:#5f6368;cursor:not-allowed;}
+tr.row-selected{background:rgba(66,133,244,.08)!important;}
+
+/* ── Table ───────────────────────────────────────────────────────── */
+.table-wrap{background:var(--surface);border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,.08);overflow:hidden;}
+.table-info{padding:12px 20px;font-size:13px;color:var(--t2);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;}
+.table-scroll{overflow-x:auto;}
+table{width:100%;border-collapse:collapse;min-width:900px;}
+th{background:#f8f9fa;padding:10px 12px;text-align:left;font-size:11px;font-weight:700;color:var(--t2);text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid var(--border);cursor:pointer;user-select:none;white-space:nowrap;}
+th:hover{background:#e8eaed;}
+th.asc::after{content:' ↑';color:var(--primary);}
+th.desc::after{content:' ↓';color:var(--primary);}
+th.no-sort{cursor:default;}
+th.no-sort:hover{background:#f8f9fa;}
+td{padding:8px 12px;border-bottom:1px solid #f1f3f4;vertical-align:middle;font-size:13px;}
+tr:last-child td{border-bottom:none;}
+tr:hover td{background:#fafbfd;}
+.cell-pid{font-family:monospace;font-size:11px;color:var(--t2);}
+.cell-name{font-weight:500;}
+.cell-date{white-space:nowrap;color:var(--t2);font-size:12px;}
+.billing-name{color:var(--text);}.billing-id{color:var(--t3);font-family:monospace;font-size:11px;}
+.owners-list{font-size:11px;color:var(--t2);line-height:1.6;}
+.nd{color:var(--t3);}
+
+/* ── Resource table cells ────────────────────────────────────────── */
+.res-count{text-align:center;font-weight:600;font-size:13px;}
+.res-count.has{color:var(--primary);}
+.res-count.zero{color:#ccc;}
+.res-total{font-weight:700;font-size:14px;}
+.res-total.has{color:#137333;background:var(--green-bg);padding:2px 8px;border-radius:12px;}
+.res-total.zero{color:var(--t3);}
+
+/* ── Badges ──────────────────────────────────────────────────────── */
+.badge{display:inline-block;padding:3px 8px;border-radius:99px;font-size:11px;font-weight:700;white-space:nowrap;}
+.badge-ok{background:var(--green-bg);color:var(--green);}
+.badge-billing{background:var(--red-bg);color:var(--red);}
+.badge-owner{background:var(--yel-bg);color:var(--yel);}
+.badge-abandon1{background:var(--orange-bg);color:var(--orange);}
+.badge-abandon2{background:#fce4e4;color:#c62828;}
+.dot-open{color:#34a853;font-weight:700;}.dot-closed{color:#ea4335;font-weight:700;}
+
+/* ── Pagination ──────────────────────────────────────────────────── */
+.pagination{display:flex;align-items:center;justify-content:center;gap:6px;padding:14px;border-top:1px solid var(--border);}
+.pg-btn{padding:5px 11px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;font-size:13px;color:var(--text);min-width:34px;text-align:center;}
+.pg-btn:hover:not(:disabled):not(.active){background:var(--bg);}
+.pg-btn.active{background:var(--primary);color:#fff;border-color:var(--primary);font-weight:700;}
+.pg-btn:disabled{opacity:.35;cursor:not-allowed;}
+
+/* ── Modal ───────────────────────────────────────────────────────── */
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:200;align-items:center;justify-content:center;}
+.modal-overlay.show{display:flex;}
+.modal{background:#fff;border-radius:12px;padding:26px 30px;width:620px;max-height:82vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,.2);}
+.modal-wide{width:740px;}
+.modal-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;}
+.modal-title{font-size:16px;font-weight:700;}
+.modal-close{background:none;border:none;font-size:20px;cursor:pointer;color:var(--t2);line-height:1;}
+.modal-row{display:flex;gap:12px;margin-bottom:10px;}
+.modal-label{width:130px;flex-shrink:0;font-size:12px;color:var(--t2);font-weight:600;padding-top:2px;}
+.modal-value{flex:1;font-size:13px;word-break:break-all;}
+.modal-cmd{background:#f8f9fa;border-radius:6px;padding:10px 14px;font-family:monospace;font-size:12px;margin-top:8px;color:#333;white-space:pre-wrap;}
+.modal-section{font-size:12px;font-weight:700;color:var(--t2);text-transform:uppercase;letter-spacing:.5px;margin:18px 0 8px;padding-bottom:4px;border-bottom:1px solid var(--border);}
+.res-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:8px;}
+.res-mini{background:#f8f9fa;border-radius:8px;padding:10px;text-align:center;}
+.res-mini-icon{font-size:18px;}.res-mini-num{font-size:18px;font-weight:700;color:var(--primary);}.res-mini-label{font-size:10px;color:var(--t2);margin-top:2px;}
+.res-mini.has-res{background:var(--blue-bg);}
+
+/* ── Cost bars (billing detail) ─────────────────────────────────── */
+.cost-bar-wrap{margin-bottom:8px;}
+.cost-bar-label{display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;}
+.cost-bar-track{background:#f1f3f4;border-radius:4px;height:10px;}
+.cost-bar-fill{background:var(--primary);height:100%;border-radius:4px;transition:width .4s;}
+.cost-monthly{display:flex;gap:12px;flex-wrap:wrap;}
+.cost-month-chip{background:var(--blue-bg);border-radius:8px;padding:8px 14px;text-align:center;}
+.cost-month-chip .cm-m{font-size:11px;color:var(--t2);margin-bottom:2px;}
+.cost-month-chip .cm-v{font-size:16px;font-weight:700;color:var(--blue);}
+
+/* ── Billing page ────────────────────────────────────────────────── */
+.settings-card{background:var(--surface);border-radius:10px;padding:20px 24px;box-shadow:0 1px 4px rgba(0,0,0,.08);margin-bottom:20px;}
+.settings-card h3{font-size:14px;font-weight:700;margin-bottom:14px;display:flex;align-items:center;gap:8px;}
+.settings-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;}
+.settings-input{border:1px solid var(--border);border-radius:6px;padding:8px 12px;font-size:13px;width:220px;outline:none;}
+.settings-input:focus{border-color:var(--primary);}
+.settings-help{margin-top:10px;font-size:12px;color:var(--t3);line-height:1.6;}
+.settings-help a{color:var(--primary);text-decoration:none;}
+.bill-cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px;}
+.bill-card{background:var(--surface);border-radius:10px;padding:18px 20px;box-shadow:0 1px 4px rgba(0,0,0,.08);}
+.bill-card-label{font-size:12px;color:var(--t2);margin-bottom:6px;}
+.bill-card-num{font-size:28px;font-weight:700;color:var(--primary);}
+.bill-card-sub{font-size:11px;color:var(--t3);margin-top:4px;}
+.cost-cell{font-weight:700;font-size:13px;}
+.cost-cell.high{color:#b31412;}
+.cost-cell.mid{color:#b06000;}
+.cost-cell.low{color:#137333;}
+.cost-cell.zero{color:var(--t3);}
+.top-svc{font-size:11px;color:var(--t2);}
+
+/* ── Empty / Loading ──────────────────────────────────────────────── */
+.state-center{text-align:center;padding:60px 24px;color:var(--t2);}
+.state-center .icon{font-size:48px;margin-bottom:12px;}
+.state-center h3{font-size:18px;margin-bottom:8px;color:var(--text);}
+</style>
+</head>
+<body>
+
+<!-- ══ Header ══════════════════════════════════════════════════════ -->
+<header>
+  <div style="display:flex;align-items:center">
+    <div class="logo"><span class="logo-gcp">GCP</span><span class="logo-dot">.</span>Auditor</div>
+    <span id="accountMeta" class="header-meta"></span>
+  </div>
+  <nav class="page-nav">
+    <button class="pnav-btn active" onclick="showPage('projects',this)">🗂 프로젝트 관리</button>
+    <button class="pnav-btn" onclick="showPage('billing',this)">💳 결제 관리</button>
+  </nav>
+  <div class="header-right">
+    <span id="lastScanTag" class="last-tag"></span>
+    <button id="scanBtn" class="scan-btn" onclick="startScan()">🔍 스캔 시작</button>
+  </div>
+</header>
+
+<!-- ══════════════════════════════════════════════════════════════════
+     페이지 1: 프로젝트 관리
+══════════════════════════════════════════════════════════════════════ -->
+<div id="page-projects" class="page-content active">
+
+  <div class="tab-bar">
+    <button class="tab-btn active" onclick="switchTab('all',this)">🗂 전체 프로젝트</button>
+    <button class="tab-btn" onclick="switchTab('resources',this)">📊 리소스 현황</button>
+  </div>
+
+  <main>
+
+    <!-- ── 탭 1: 전체 프로젝트 ─────────────────────────────────── -->
+    <div id="tab-all" class="tab-panel show">
+
+      <div class="cards">
+        <div class="card card-total"    onclick="filterCard('')">
+          <div id="cntTotal"    class="card-num">—</div><div class="card-label">전체 프로젝트</div></div>
+        <div class="card card-ok"       onclick="filterCard('즉시 삭제 가능')">
+          <div id="cntOk"       class="card-num">—</div><div class="card-label">즉시 삭제 가능</div></div>
+        <div class="card card-billing"  onclick="filterCard('빌링연결')">
+          <div id="cntBilling"  class="card-num">—</div><div class="card-label">빌링연결</div></div>
+        <div class="card card-owner"    onclick="filterCard('소유자 확인 필요')">
+          <div id="cntOwner"    class="card-num">—</div><div class="card-label">소유자 확인 필요</div></div>
+        <div class="card card-abandoned" onclick="filterAbandoned()">
+          <div id="cntAbandoned" class="card-num">—</div><div class="card-label">방치 의심 프로젝트</div></div>
+      </div>
+
+      <div id="scanProgress" class="progress-wrap">
+        <div class="progress-top">
+          <span id="sPct" class="progress-pct">0%</span>
+          <span id="sStage" class="progress-stage"></span>
+        </div>
+        <div class="progress-track"><div id="sFill" class="progress-fill" style="width:0%"></div></div>
+        <div id="sDetail" class="progress-detail"></div>
+      </div>
+
+      <div class="controls">
+        <input id="search" class="ctrl-input" type="text" placeholder="🔍 ID, 이름, 소유자, 빌링 검색..." oninput="applyFilters()">
+        <select id="fYear" class="ctrl-select" onchange="applyFilters()"><option value="">전체 연도</option></select>
+        <select id="fBilling" class="ctrl-select" onchange="applyFilters()">
+          <option value="">전체 빌링 연결</option>
+          <option value="connected">연결됨</option>
+          <option value="OPEN">연결됨 · OPEN</option>
+          <option value="CLOSED">연결됨 · CLOSED</option>
+          <option value="none">미연결</option>
+        </select>
+        <select id="fDeletable" class="ctrl-select" onchange="applyFilters()">
+          <option value="">삭제 가능여부 전체</option>
+          <option value="즉시 삭제 가능">즉시 삭제 가능</option>
+          <option value="빌링연결">빌링연결</option>
+          <option value="소유자 확인 필요">소유자 확인 필요</option>
+        </select>
+        <select id="fAbandoned" class="ctrl-select" onchange="applyFilters()">
+          <option value="">방치 여부 전체</option>
+          <option value="1">방치 의심 이상</option>
+          <option value="2">방치 가능성 높음</option>
+        </select>
+        <div class="ctrl-sep"></div>
+        <button class="reset-btn" onclick="resetFilters()">초기화</button>
+        <a href="/api/export" class="action-btn green">⬇ 엑셀 다운로드</a>
+        <button id="deleteSelBtn" class="action-btn red" style="display:none" onclick="openDeleteModal()">🗑 선택 삭제 (<span id="selCount">0</span>)</button>
+      </div>
+
+      <div class="table-wrap">
+        <div id="tableInfo" class="table-info">—</div>
+        <div class="table-scroll">
+          <table>
+            <thead><tr>
+              <th class="no-sort" style="width:36px;text-align:center"><input type="checkbox" id="chkAll" onchange="toggleSelectAll(this)" title="전체 선택"></th>
+              <th onclick="sortBy('project_id',this)">프로젝트 ID</th>
+              <th onclick="sortBy('name',this)">프로젝트 이름</th>
+              <th onclick="sortBy('create_time',this)" class="asc">생성일</th>
+              <th onclick="sortBy('billing_account_name',this)">빌링 계정</th>
+              <th onclick="sortBy('billing_enabled',this)">빌링 연결</th>
+              <th class="no-sort">소유자/편집자</th>
+              <th onclick="sortBy('deletable',this)">삭제 가능여부</th>
+              <th class="no-sort">방치 여부</th>
+            </tr></thead>
+            <tbody id="tbody"></tbody>
+          </table>
+        </div>
+        <div id="pagination" class="pagination"></div>
+      </div>
+    </div><!-- /tab-all -->
+
+    <!-- ── 탭 2: 리소스 현황 ──────────────────────────────────── -->
+    <div id="tab-resources" class="tab-panel">
+
+      <!-- 컴퓨팅 -->
+      <div class="res-section">
+        <div class="res-section-label">⚙️ 컴퓨팅</div>
+        <div class="res-cards res-cards-4">
+          <div class="res-card"><div class="res-card-icon">🖥</div><div id="rVM"  class="res-card-num">—</div><div class="res-card-label">Compute VM</div></div>
+          <div class="res-card"><div class="res-card-icon">☁</div> <div id="rRun" class="res-card-num">—</div><div class="res-card-label">Cloud Run</div></div>
+          <div class="res-card"><div class="res-card-icon">⚡</div><div id="rFn"  class="res-card-num">—</div><div class="res-card-label">Functions</div></div>
+          <div class="res-card"><div class="res-card-icon">⎈</div> <div id="rGKE" class="res-card-num">—</div><div class="res-card-label">GKE</div></div>
+        </div>
+      </div>
+      <!-- 데이터 -->
+      <div class="res-section">
+        <div class="res-section-label">🗄 데이터</div>
+        <div class="res-cards res-cards-3">
+          <div class="res-card"><div class="res-card-icon">🗄</div> <div id="rSt"    class="res-card-num">—</div><div class="res-card-label">Storage</div></div>
+          <div class="res-card"><div class="res-card-icon">🗃</div> <div id="rSQL"   class="res-card-num">—</div><div class="res-card-label">Cloud SQL</div></div>
+          <div class="res-card"><div class="res-card-icon">📨</div><div id="rPS"    class="res-card-num">—</div><div class="res-card-label">Pub/Sub</div></div>
+        </div>
+      </div>
+      <!-- 네트워크 -->
+      <div class="res-section">
+        <div class="res-section-label">🌐 네트워크</div>
+        <div class="res-cards res-cards-3">
+          <div class="res-card"><div class="res-card-icon">🌐</div><div id="rVPC"   class="res-card-num">—</div><div class="res-card-label">VPC Network</div></div>
+          <div class="res-card"><div class="res-card-icon">⚖</div> <div id="rLB"    class="res-card-num">—</div><div class="res-card-label">Load Balancer</div></div>
+          <div class="res-card"><div class="res-card-icon">🛡</div> <div id="rArmor" class="res-card-num">—</div><div class="res-card-label">Cloud Armor</div></div>
+        </div>
+      </div>
+      <!-- 기타 -->
+      <div class="res-section">
+        <div class="res-section-label">🏪 기타</div>
+        <div class="res-cards res-cards-4">
+          <div class="res-card"><div class="res-card-icon">🏪</div><div id="rMkt"  class="res-card-num">—</div><div class="res-card-label">Marketplace</div></div>
+        </div>
+      </div>
+
+      <div id="resProgress" class="progress-wrap">
+        <div class="progress-top">
+          <span id="rPct" class="progress-pct">0%</span>
+          <span id="rStage" class="progress-stage"></span>
+        </div>
+        <div class="progress-track"><div id="rFill" class="progress-fill" style="width:0%"></div></div>
+        <div id="rDetail" class="progress-detail"></div>
+      </div>
+
+      <div class="controls">
+        <input id="resSearch" class="ctrl-input" type="text" placeholder="🔍 프로젝트 ID, 이름 검색..." oninput="applyResFilters()">
+        <select id="resBillingAccountFilter" class="ctrl-select" onchange="applyResFilters()" style="max-width:200px">
+          <option value="">전체 빌링 계정</option>
+        </select>
+        <select id="resBillingStatusFilter" class="ctrl-select" onchange="applyResFilters()">
+          <option value="">빌링 상태 전체</option>
+          <option value="OPEN">● OPEN</option>
+          <option value="CLOSED">● CLOSED</option>
+        </select>
+        <select id="resFilter" class="ctrl-select" onchange="applyResFilters()">
+          <option value="">전체 (리소스 있음 + 없음)</option>
+          <option value="has">리소스 있는 프로젝트만</option>
+          <option value="none">리소스 없는 프로젝트</option>
+        </select>
+        <div class="ctrl-sep"></div>
+        <span id="resLastScan" style="font-size:12px;color:var(--t3)"></span>
+        <button id="resScanBtn" class="action-btn blue" onclick="startResScan()">🔎 리소스 스캔</button>
+      </div>
+
+      <div class="table-wrap">
+        <div id="resTableInfo" class="table-info">—</div>
+        <div class="table-scroll">
+          <table style="min-width:1400px">
+            <thead><tr>
+              <th onclick="sortRes('project_id',this)">프로젝트 ID</th>
+              <th onclick="sortRes('name',this)">프로젝트 이름</th>
+              <th onclick="sortRes('billing_account_name',this)">빌링 계정</th>
+              <th style="text-align:center;background:#f0f4ff" colspan="4">⚙️ 컴퓨팅</th>
+              <th style="text-align:center;background:#f0fff4" colspan="3">🗄 데이터</th>
+              <th style="text-align:center;background:#fff3e0" colspan="3">🌐 네트워크</th>
+              <th style="text-align:center;background:#f3e5f5" colspan="1">🏪 기타</th>
+              <th onclick="sortRes('total_resources',this)" class="desc" style="text-align:center">합계</th>
+            </tr><tr>
+              <th class="no-sort"></th><th class="no-sort"></th><th class="no-sort"></th>
+              <th onclick="sortRes('vm',this)"          style="text-align:center;background:#f0f4ff">🖥VM</th>
+              <th onclick="sortRes('run',this)"         style="text-align:center;background:#f0f4ff">☁Run</th>
+              <th onclick="sortRes('functions',this)"   style="text-align:center;background:#f0f4ff">⚡Fn</th>
+              <th onclick="sortRes('gke',this)"         style="text-align:center;background:#f0f4ff">⎈GKE</th>
+              <th onclick="sortRes('storage',this)"     style="text-align:center;background:#f0fff4">🗄Stor</th>
+              <th onclick="sortRes('sql',this)"         style="text-align:center;background:#f0fff4">🗃SQL</th>
+              <th onclick="sortRes('pubsub',this)"      style="text-align:center;background:#f0fff4">📨PS</th>
+              <th onclick="sortRes('vpc',this)"         style="text-align:center;background:#fff3e0">🌐VPC</th>
+              <th onclick="sortRes('lb',this)"          style="text-align:center;background:#fff3e0">⚖LB</th>
+              <th onclick="sortRes('armor',this)"       style="text-align:center;background:#fff3e0">🛡Armor</th>
+              <th onclick="sortRes('marketplace',this)" style="text-align:center;background:#f3e5f5">🏪Mkt</th>
+              <th class="no-sort"></th>
+            </tr></thead>
+            <tbody id="resTbody"></tbody>
+          </table>
+        </div>
+        <div id="resPagination" class="pagination"></div>
+      </div>
+    </div><!-- /tab-resources -->
+
+  </main>
+</div><!-- /page-projects -->
+
+
+<!-- ══════════════════════════════════════════════════════════════════
+     페이지 2: 결제 관리
+══════════════════════════════════════════════════════════════════════ -->
+<div id="page-billing" class="page-content">
+  <main>
+
+    <!-- BigQuery 설정 -->
+    <div class="settings-card">
+      <h3>⚙️ BigQuery 빌링 익스포트 설정 <span style="font-size:12px;font-weight:400;color:var(--t3)">(선택)</span></h3>
+      <div class="settings-row">
+        <input id="bqProject" class="settings-input" type="text" placeholder="GCP Project ID (예: my-billing-proj)">
+        <input id="bqDataset" class="settings-input" type="text" placeholder="Dataset ID (예: billing_export)">
+        <button class="action-btn blue" onclick="saveBillingSettings()">💾 저장</button>
+        <span id="settingsSaved" style="font-size:12px;color:#137333;display:none">✓ 저장됨</span>
+      </div>
+      <div class="settings-help">
+        <strong>🏦 빌링 계정 현황 모드 (기본)</strong> — BigQuery 설정 없이 바로 스캔 가능. <code>gcloud billing accounts list</code> 기반으로 전체 빌링 계정 목록, OPEN/CLOSED 상태, 마스터·하위 계정 구조, 연결 프로젝트 수를 조회합니다. 실제 비용 금액은 조회 불가.<br>
+        <strong>📊 BigQuery 모드</strong> — BigQuery 빌링 익스포트를 설정하면 프로젝트별·서비스별 상세 비용 조회 가능.
+        GCP Console → 결제 → 빌링 익스포트 → BigQuery로 내보내기를 활성화하세요.
+      </div>
+    </div>
+
+    <!-- 모드 배너 -->
+    <div id="billModeBanner" style="display:none;background:var(--blue-bg);border-radius:10px;padding:12px 20px;margin-bottom:16px;font-size:13px;color:var(--blue);display:none;align-items:center;gap:10px">
+      <span id="billModeIcon" style="font-size:18px"></span>
+      <span id="billModeText"></span>
+    </div>
+
+    <!-- 비용 요약 카드 -->
+    <div class="bill-cards">
+      <div class="bill-card">
+        <div id="billTotalLabel" class="bill-card-label">이번달 총 비용</div>
+        <div id="billTotal" class="bill-card-num">—</div>
+        <div id="billMonth" class="bill-card-sub"></div>
+      </div>
+      <div class="bill-card">
+        <div id="billCountLabel" class="bill-card-label">조회된 항목 수</div>
+        <div id="billProjectCount" class="bill-card-num">—</div>
+        <div id="billCountSub" class="bill-card-sub">빌링 데이터 기준</div>
+      </div>
+      <div class="bill-card">
+        <div id="billTopLabel" class="bill-card-label">가장 비싼 항목</div>
+        <div id="billTopProject" class="bill-card-num" style="font-size:14px;margin-top:4px">—</div>
+        <div id="billTopCost" class="bill-card-sub"></div>
+      </div>
+      <div class="bill-card" style="display:flex;flex-direction:column;justify-content:center;gap:10px">
+        <div style="font-size:12px;color:var(--t2)">마지막 스캔: <span id="billLastScan" style="color:var(--text)">—</span></div>
+        <button id="billScanBtn" class="action-btn orange" onclick="startBillingScan()" style="width:fit-content">💳 빌링 스캔</button>
+      </div>
+    </div>
+
+    <!-- 스캔 진행 -->
+    <div id="billProgress" class="progress-wrap">
+      <div class="progress-top">
+        <span id="bPct" class="progress-pct">0%</span>
+        <span id="bStage" class="progress-stage"></span>
+      </div>
+      <div class="progress-track"><div id="bFill" class="progress-fill" style="width:0%"></div></div>
+    </div>
+
+    <!-- 오류 메시지 -->
+    <div id="billError" style="display:none;background:#fce8e6;border-radius:10px;padding:16px 20px;margin-bottom:16px;font-size:13px;color:#b31412;white-space:pre-line"></div>
+
+    <!-- ─────── BigQuery 모드: 프로젝트별 테이블 ─────── -->
+    <div id="billBqSection" style="display:none">
+      <div class="controls">
+        <input id="billSearch" class="ctrl-input" type="text" placeholder="🔍 프로젝트 ID, 이름 검색..." oninput="applyBillFilters()">
+        <select id="billFilter" class="ctrl-select" onchange="applyBillFilters()">
+          <option value="">전체 프로젝트</option>
+          <option value="has">비용 발생 프로젝트만</option>
+          <option value="none">비용 없는 프로젝트</option>
+        </select>
+        <div class="ctrl-sep"></div>
+      </div>
+      <div class="table-wrap">
+        <div id="billTableInfo" class="table-info">—</div>
+        <div class="table-scroll">
+          <table>
+            <thead><tr>
+              <th onclick="sortBill('project_id',this)">프로젝트 ID</th>
+              <th onclick="sortBill('name',this)">프로젝트 이름</th>
+              <th onclick="sortBill('billing_account_name',this)">빌링 계정</th>
+              <th onclick="sortBill('_total',this)" class="desc" style="text-align:right">이번달 비용</th>
+              <th class="no-sort">주요 서비스</th>
+              <th class="no-sort" style="text-align:center">월별 추이</th>
+            </tr></thead>
+            <tbody id="billTbody"></tbody>
+          </table>
+        </div>
+        <div id="billPagination" class="pagination"></div>
+      </div>
+    </div>
+
+    <!-- ─────── 계정 현황 모드: 빌링 계정 구조 테이블 ─────── -->
+    <div id="billAcctSection" style="display:none">
+      <div class="controls">
+        <input id="acctSearch" class="ctrl-input" type="text" placeholder="🔍 빌링 계정 ID, 이름 검색..." oninput="applyAcctFilters()">
+        <select id="acctOpenFilter" class="ctrl-select" onchange="applyAcctFilters()">
+          <option value="">전체 상태</option>
+          <option value="open">OPEN만</option>
+          <option value="closed">CLOSED만</option>
+        </select>
+        <select id="acctTypeFilter" class="ctrl-select" onchange="applyAcctFilters()">
+          <option value="">전체 유형</option>
+          <option value="master">마스터 계정</option>
+          <option value="sub">하위(Sub) 계정</option>
+          <option value="standalone">독립 계정</option>
+        </select>
+        <div class="ctrl-sep"></div>
+      </div>
+      <div class="table-wrap">
+        <div id="acctTableInfo" class="table-info">—</div>
+        <div class="table-scroll">
+          <table>
+            <thead><tr>
+              <th onclick="sortAcct('billing_account_id',this)">빌링 계정 ID</th>
+              <th onclick="sortAcct('display_name',this)">계정 이름</th>
+              <th onclick="sortAcct('currency',this)" style="text-align:center">통화</th>
+              <th class="no-sort" style="text-align:center">유형</th>
+              <th onclick="sortAcct('master_billing_account',this)">상위 계정</th>
+              <th onclick="sortAcct('project_count',this)" class="desc" style="text-align:center">연결 프로젝트</th>
+              <th class="no-sort" style="text-align:center">상태</th>
+            </tr></thead>
+            <tbody id="acctTbody"></tbody>
+          </table>
+        </div>
+        <div id="acctPagination" class="pagination"></div>
+      </div>
+    </div>
+
+    <!-- ─────── 인보이스 모드: 빌링 계정별 테이블 ─────── -->
+    <div id="billInvSection" style="display:none">
+      <!-- BigQuery 미설정 안내 배너 -->
+      <div id="invNoBqBanner" style="display:none;margin:16px 0;padding:16px 20px;background:#fff8e1;border:1px solid #f9a825;border-radius:10px">
+        <div style="font-size:15px;font-weight:700;color:#e65100;margin-bottom:8px">⚠️ 비용 데이터를 가져올 수 없습니다</div>
+        <p style="margin:0 0 8px;font-size:13px;color:#5f4007">
+          이 계정은 <strong>카드 자동결제(Automatic payment)</strong> 방식으로 Cloud Billing 인보이스 API를 지원하지 않습니다.<br>
+          GCP 콘솔의 Cost Reports와 동일한 데이터를 조회하려면 <strong>BigQuery 빌링 익스포트</strong>를 설정해야 합니다.
+        </p>
+        <div style="font-size:13px;color:#5f4007">
+          <strong>설정 방법:</strong>
+          <ol style="margin:6px 0 0 18px;padding:0;line-height:1.8">
+            <li>GCP 콘솔 → <strong>결제 → 빌링 내보내기</strong> 이동</li>
+            <li>BigQuery로 내보내기 탭 → <strong>표준 사용량 비용 → 편집</strong></li>
+            <li>프로젝트와 데이터셋 지정 후 저장 (첫 데이터 수집까지 최대 24시간 소요)</li>
+            <li>위 <strong>설정</strong> 카드에 프로젝트 ID와 데이터셋 이름 입력 후 재스캔</li>
+          </ol>
+        </div>
+      </div>
+      <div class="controls">
+        <input id="invSearch" class="ctrl-input" type="text" placeholder="🔍 빌링 계정 ID, 이름 검색..." oninput="applyInvFilters()">
+        <div class="ctrl-sep"></div>
+      </div>
+      <div class="table-wrap">
+        <div id="invTableInfo" class="table-info">—</div>
+        <div class="table-scroll">
+          <table>
+            <thead><tr>
+              <th onclick="sortInv('billing_account_id',this)">빌링 계정 ID</th>
+              <th onclick="sortInv('billing_account_name',this)">빌링 계정 이름</th>
+              <th onclick="sortInv('project_count',this)" style="text-align:center">포함 프로젝트</th>
+              <th onclick="sortInv('_total',this)" class="desc" style="text-align:right">이번달 합계</th>
+              <th class="no-sort" style="text-align:center">월별 추이</th>
+              <th class="no-sort" style="text-align:center">상태</th>
+            </tr></thead>
+            <tbody id="invTbody"></tbody>
+          </table>
+        </div>
+        <div id="invPagination" class="pagination"></div>
+      </div>
+    </div>
+
+  </main>
+</div><!-- /page-billing -->
+
+
+<!-- ── 모달: 삭제 확인 ───────────────────────────────────────────────── -->
+<div id="deleteModal" class="modal-overlay" onclick="closeModalOverlay(event,'deleteModal')">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">🗑 프로젝트 삭제</div>
+      <button class="modal-close" onclick="closeModal('deleteModal')">✕</button>
+    </div>
+    <div id="delModalBody"></div>
+    <div id="delProgress" style="display:none;margin-top:12px;font-size:13px;color:var(--t2)">⏳ 삭제 처리 중...</div>
+    <div id="delResultArea"></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
+      <button class="reset-btn" onclick="closeModal('deleteModal')">취소</button>
+      <button id="confirmDelBtn" class="action-btn red" onclick="confirmDelete()">삭제 확인</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── 모달: 프로젝트 상세 ─────────────────────────────────────────── -->
+<div id="projectModal" class="modal-overlay" onclick="closeModalOverlay(event,'projectModal')">
+  <div class="modal">
+    <div class="modal-header">
+      <div id="projModalTitle" class="modal-title"></div>
+      <button class="modal-close" onclick="closeModal('projectModal')">✕</button>
+    </div>
+    <div id="projModalBody"></div>
+  </div>
+</div>
+
+<!-- ── 모달: 리소스 상세 ───────────────────────────────────────────── -->
+<div id="resourceModal" class="modal-overlay" onclick="closeModalOverlay(event,'resourceModal')">
+  <div class="modal modal-wide">
+    <div class="modal-header">
+      <div id="resModalTitle" class="modal-title"></div>
+      <button class="modal-close" onclick="closeModal('resourceModal')">✕</button>
+    </div>
+    <div id="resModalBody"></div>
+  </div>
+</div>
+
+<!-- ── 모달: 비용 상세 ────────────────────────────────────────────── -->
+<div id="costModal" class="modal-overlay" onclick="closeModalOverlay(event,'costModal')">
+  <div class="modal modal-wide">
+    <div class="modal-header">
+      <div id="costModalTitle" class="modal-title"></div>
+      <button class="modal-close" onclick="closeModal('costModal')">✕</button>
+    </div>
+    <div id="costModalBody"></div>
+  </div>
+</div>
+
+<!-- ── 모달: 빌링 계정 상세 ──────────────────────────────────────────── -->
+<div id="acctModal" class="modal-overlay" onclick="closeModalOverlay(event,'acctModal')">
+  <div class="modal modal-wide">
+    <div class="modal-header">
+      <div id="acctModalTitle" class="modal-title"></div>
+      <button class="modal-close" onclick="closeModal('acctModal')">✕</button>
+    </div>
+    <div id="acctModalBody"></div>
+  </div>
+</div>
+
+<script>
+// ── 전역 상태 ─────────────────────────────────────────────────────────
+let ALL=[], FILTERED=[], sortField='create_time', sortAsc=true, page=1;
+let SELECTED_PIDS=new Set();
+let RES_ALL=[], RES_FILTERED=[], resSortField='total_resources', resSortAsc=false, resPage=1;
+let BILL_ALL=[], BILL_FILTERED=[], COST_MAP={}, billSortField='_total', billSortAsc=false, billPage=1;
+const PER=50;
+
+// ── 페이지 전환 ──────────────────────────────────────────────────────
+function showPage(name, btn) {
+  document.querySelectorAll('.page-content').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.pnav-btn').forEach(b=>b.classList.remove('active'));
+  document.getElementById('page-'+name).classList.add('active');
+  btn.classList.add('active');
+  if(name==='billing') loadBillingPage();
+}
+
+// ── 탭 전환 ──────────────────────────────────────────────────────────
+function switchTab(name, btn) {
+  document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('show'));
+  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+  document.getElementById('tab-'+name).classList.add('show');
+  btn.classList.add('active');
+}
+
+// ── 방치 프로젝트 판단 (클라이언트 사이드) ───────────────────────────
+function abandonedLevel(p) {
+  if (p.billing_enabled==='True' && p.billing_open==='True') return 0;
+  const ageDays = (Date.now() - new Date(p.create_time+'T00:00:00')) / 86400000;
+  const nameLow = (p.name||'').toLowerCase();
+  const userOwners = (p.owners||[]).filter(o=>o.startsWith('user:')).length;
+  let score = 0;
+  if (userOwners === 0) score += 2;
+  if (ageDays > 365)  score += 1;
+  if (ageDays > 730)  score += 1;
+  if (ageDays > 1460) score += 1;
+  if (!p.name || nameLow.startsWith('my project') || nameLow==='my first project') score += 1;
+  if (['test','temp','demo','sandbox','playground','sample','trial'].some(k=>nameLow.includes(k))) score += 1;
+  // CLOSED: billing_enabled=False이지만 billing_account_id 있음 → 방치 신호
+  if (p.billing_open==='False'||(p.billing_account_id&&p.billing_enabled!=='True')) score += 1;
+  if (score >= 5) return 2;
+  if (score >= 3) return 1;
+  return 0;
+}
+
+// ── 초기화 ───────────────────────────────────────────────────────────
+async function init() {
+  const [statusRes, resRes] = await Promise.all([
+    fetch('/api/status').then(r=>r.json()),
+    fetch('/api/resources').then(r=>r.json()),
+  ]);
+
+  if (statusRes.account) document.getElementById('accountMeta').textContent = statusRes.account;
+  if (statusRes.last_scan) document.getElementById('lastScanTag').textContent='마지막 스캔: '+statusRes.last_scan;
+
+  if (statusRes.status==='scanning') { setScanningUI(); connectScanSSE(); }
+  else if (statusRes.projects?.length) setProjectData(statusRes.projects);
+  else showEmpty('tbody','tableInfo','스캔 시작 버튼을 눌러 GCP 프로젝트를 조회하세요.');
+
+  if (resRes.status==='scanning') { setResScanningUI(); connectResSSE(); }
+  else if (resRes.projects?.length) setResData(resRes.projects, resRes.last_scan);
+  else renderResEmpty('리소스 스캔 버튼을 눌러 빌링 연결 프로젝트의 리소스를 조회하세요.');
+
+  // BigQuery 설정 불러오기
+  fetch('/api/billing/settings').then(r=>r.json()).then(s=>{
+    if(s.bq_project) document.getElementById('bqProject').value = s.bq_project;
+    if(s.bq_dataset) document.getElementById('bqDataset').value = s.bq_dataset;
+  });
+}
+
+// ── 프로젝트 탭 ──────────────────────────────────────────────────────
+function setProjectData(projects) {
+  ALL = projects;
+  buildYearFilter();
+  applyFilters();
+}
+
+function buildYearFilter() {
+  const years=[...new Set(ALL.map(p=>p.create_time.slice(0,4)))].sort().reverse();
+  const sel=document.getElementById('fYear');
+  sel.innerHTML='<option value="">전체 연도</option>';
+  years.forEach(y=>{const o=document.createElement('option');o.value=y;o.textContent=y+'년';sel.appendChild(o);});
+}
+
+function applyFilters() {
+  const q=document.getElementById('search').value.toLowerCase();
+  const yr=document.getElementById('fYear').value;
+  const bi=document.getElementById('fBilling').value;
+  const dl=document.getElementById('fDeletable').value;
+  const ab=parseInt(document.getElementById('fAbandoned').value||'0');
+  FILTERED=ALL.filter(p=>{
+    if(q&&!([p.project_id,p.name,...(p.owners||[]),p.billing_account_name,p.billing_account_id].join(' ').toLowerCase().includes(q)))return false;
+    if(yr&&!p.create_time.startsWith(yr))return false;
+    // connected: billing_enabled=True OR billing_account_id 있음(CLOSED 포함)
+    if(bi==='connected'&&p.billing_enabled!=='True'&&!p.billing_account_id)return false;
+    if(bi==='OPEN'&&!(p.billing_enabled==='True'&&p.billing_open==='True'))return false;
+    // CLOSED: billing_open=False(활성 계정 CLOSED) OR billing_enabled=False이지만 billing_account_id 있음
+    if(bi==='CLOSED'&&!((p.billing_enabled==='True'&&p.billing_open==='False')||(p.billing_account_id&&p.billing_enabled!=='True')))return false;
+    // none: 진짜 미연결 (billing_account_id 없음)
+    if(bi==='none'&&(p.billing_enabled==='True'||p.billing_account_id))return false;
+    if(dl&&p.deletable!==dl)return false;
+    if(ab&&abandonedLevel(p)<ab)return false;
+    return true;
+  });
+  doSort(); page=1; updateCards(); renderTable();
+}
+
+function doSort() {
+  FILTERED.sort((a,b)=>{
+    const va=String(a[sortField]||'').toLowerCase(), vb=String(b[sortField]||'').toLowerCase();
+    return sortAsc?va.localeCompare(vb,'ko'):vb.localeCompare(va,'ko');
+  });
+}
+
+function sortBy(field, th) {
+  if(sortField===field) sortAsc=!sortAsc; else{sortField=field;sortAsc=true;}
+  document.querySelectorAll('#tab-all th').forEach(t=>t.classList.remove('asc','desc'));
+  th.classList.add(sortAsc?'asc':'desc');
+  doSort(); renderTable();
+}
+
+function filterCard(val) {
+  document.getElementById('fDeletable').value=val;
+  document.getElementById('fAbandoned').value='';
+  document.querySelectorAll('.card').forEach(c=>c.classList.remove('active-filter'));
+  if(val){const map={'즉시 삭제 가능':'card-ok','빌링연결':'card-billing','소유자 확인 필요':'card-owner'};
+    document.querySelector('.'+map[val])?.classList.add('active-filter');}
+  applyFilters();
+}
+
+function filterAbandoned() {
+  document.getElementById('fAbandoned').value='1';
+  document.getElementById('fDeletable').value='';
+  document.querySelectorAll('.card').forEach(c=>c.classList.remove('active-filter'));
+  document.querySelector('.card-abandoned')?.classList.add('active-filter');
+  applyFilters();
+}
+
+function resetFilters() {
+  ['search','fYear','fBilling','fDeletable','fAbandoned'].forEach(id=>document.getElementById(id).value='');
+  document.querySelectorAll('.card').forEach(c=>c.classList.remove('active-filter'));
+  applyFilters();
+}
+
+function updateCards() {
+  document.getElementById('cntTotal').textContent=ALL.length.toLocaleString();
+  document.getElementById('cntOk').textContent=ALL.filter(p=>p.deletable==='즉시 삭제 가능').length.toLocaleString();
+  document.getElementById('cntBilling').textContent=ALL.filter(p=>p.deletable==='빌링연결').length.toLocaleString();
+  document.getElementById('cntOwner').textContent=ALL.filter(p=>p.deletable==='소유자 확인 필요').length.toLocaleString();
+  document.getElementById('cntAbandoned').textContent=ALL.filter(p=>abandonedLevel(p)>=1).length.toLocaleString();
+}
+
+function renderTable() {
+  const start=(page-1)*PER, slice=FILTERED.slice(start,start+PER), total=FILTERED.length;
+  document.getElementById('tableInfo').innerHTML=
+    `총 <strong>${total.toLocaleString()}</strong>개 중 <strong>${start+1}–${Math.min(start+PER,total)}</strong>개 표시`;
+  if(!total){showEmpty('tbody','tableInfo','검색 결과가 없습니다.');document.getElementById('pagination').innerHTML='';return;}
+  document.getElementById('tbody').innerHTML=slice.map((p,i)=>{
+    const badge=p.deletable==='즉시 삭제 가능'?'<span class="badge badge-ok">즉시 삭제 가능</span>'
+      :p.deletable==='빌링연결'?'<span class="badge badge-billing">빌링연결</span>'
+      :'<span class="badge badge-owner">소유자 확인 필요</span>';
+    let bSt;
+    if(p.billing_enabled==='True'){
+      // 빌링 활성화 (OPEN 또는 상태 미확인)
+      const openTag=p.billing_open==='True'?'<span class="dot-open" style="font-size:11px;margin-left:4px">OPEN</span>'
+        :p.billing_open==='False'?'<span class="dot-closed" style="font-size:11px;margin-left:4px">CLOSED</span>':'';
+      bSt=`<span class="badge badge-billing" style="font-size:11px">연결됨</span>${openTag}`;
+    } else if(p.billing_account_id){
+      // 빌링 계정 연결되어 있으나 비활성화(CLOSED) — billing_enabled=False 이지만 계정 존재
+      bSt='<span class="badge badge-billing" style="font-size:11px">연결됨</span><span class="dot-closed" style="font-size:11px;margin-left:4px">CLOSED</span>';
+    } else {
+      bSt='<span class="badge" style="background:#f1f3f4;color:#5f6368;font-size:11px">미연결</span>';
+    }
+    const bCell=p.billing_account_name
+      ?`<div class="billing-name">${p.billing_account_name}</div><div class="billing-id">${p.billing_account_id}</div>`
+      :p.billing_account_id?`<div class="billing-id">${p.billing_account_id}</div>`:'<span class="nd">—</span>';
+    const owCell=(p.owners||[]).length?`<div class="owners-list">${p.owners.join('<br>')}</div>`:'<span class="nd">—</span>';
+    const al=abandonedLevel(p);
+    const abBadge=al===2?'<span class="badge badge-abandon2">방치 가능성 높음</span>'
+      :al===1?'<span class="badge badge-abandon1">방치 의심</span>':'';
+    const chk=SELECTED_PIDS.has(p.project_id)?'checked':'';
+    return `<tr class="${SELECTED_PIDS.has(p.project_id)?'row-selected':''}">
+      <td style="text-align:center" onclick="event.stopPropagation()">
+        <input type="checkbox" ${chk} onchange="toggleRow(this,'${p.project_id}')">
+      </td>
+      <td class="cell-pid" style="cursor:pointer" onclick="showDetail(${start+i})">${p.project_id}</td>
+      <td class="cell-name" style="cursor:pointer" onclick="showDetail(${start+i})">${p.name||'<span class="nd">—</span>'}</td>
+      <td class="cell-date" style="cursor:pointer" onclick="showDetail(${start+i})">${p.create_time}</td>
+      <td style="cursor:pointer" onclick="showDetail(${start+i})">${bCell}</td>
+      <td style="cursor:pointer" onclick="showDetail(${start+i})">${bSt}</td>
+      <td style="cursor:pointer" onclick="showDetail(${start+i})">${owCell}</td>
+      <td style="cursor:pointer" onclick="showDetail(${start+i})">${badge}</td>
+      <td style="cursor:pointer" onclick="showDetail(${start+i})">${abBadge||'<span class="nd">—</span>'}</td>
+    </tr>`;
+  }).join('');
+  // 전체선택 체크박스 상태 동기화
+  const visiblePids=slice.map(p=>p.project_id);
+  const allChecked=visiblePids.length>0&&visiblePids.every(pid=>SELECTED_PIDS.has(pid));
+  document.getElementById('chkAll').checked=allChecked;
+  document.getElementById('chkAll').indeterminate=!allChecked&&visiblePids.some(pid=>SELECTED_PIDS.has(pid));
+  renderPagination('pagination',total,page,n=>{page=n;renderTable();});
+}
+
+function toggleRow(el, pid) {
+  if(el.checked) SELECTED_PIDS.add(pid); else SELECTED_PIDS.delete(pid);
+  updateSelectionUI();
+  // 해당 행 하이라이트
+  el.closest('tr').classList.toggle('row-selected', el.checked);
+  // 전체선택 체크박스 상태 갱신
+  const visiblePids=FILTERED.slice((page-1)*PER, page*PER).map(p=>p.project_id);
+  const allChecked=visiblePids.every(pid=>SELECTED_PIDS.has(pid));
+  document.getElementById('chkAll').checked=allChecked;
+  document.getElementById('chkAll').indeterminate=!allChecked&&visiblePids.some(pid=>SELECTED_PIDS.has(pid));
+}
+
+function toggleSelectAll(el) {
+  const visiblePids=FILTERED.slice((page-1)*PER, page*PER).map(p=>p.project_id);
+  if(el.checked) visiblePids.forEach(pid=>SELECTED_PIDS.add(pid));
+  else visiblePids.forEach(pid=>SELECTED_PIDS.delete(pid));
+  updateSelectionUI();
+  renderTable();
+}
+
+function updateSelectionUI() {
+  const n=SELECTED_PIDS.size;
+  document.getElementById('selCount').textContent=n;
+  document.getElementById('deleteSelBtn').style.display=n>0?'inline-flex':'none';
+}
+
+function openDeleteModal() {
+  const pids=[...SELECTED_PIDS];
+  const projects=ALL.filter(p=>pids.includes(p.project_id));
+  const hasBilling=projects.some(p=>p.deletable==='빌링연결');
+  const rows=projects.map(p=>{
+    const badge=p.deletable==='즉시 삭제 가능'?'<span class="badge badge-ok">즉시 삭제 가능</span>'
+      :p.deletable==='빌링연결'?'<span class="badge badge-billing">빌링연결</span>'
+      :'<span class="badge badge-owner">소유자 확인 필요</span>';
+    return `<tr><td class="cell-pid">${p.project_id}</td><td>${p.name||'—'}</td><td>${badge}</td></tr>`;
+  }).join('');
+  document.getElementById('delModalBody').innerHTML=`
+    ${hasBilling?`<div style="padding:10px 14px;background:#fce8e6;border-radius:8px;color:#c62828;font-size:13px;margin-bottom:12px">
+      ⚠️ <strong>빌링이 연결된 프로젝트</strong>가 포함되어 있습니다. 삭제 전 빌링 연결을 해제하는 것을 권장합니다.
+    </div>`:''}
+    <p style="font-size:13px;color:var(--t2);margin:0 0 10px">아래 <strong>${pids.length}개</strong> 프로젝트를 삭제합니다. 삭제된 프로젝트는 30일 후 완전히 제거됩니다.</p>
+    <div style="max-height:260px;overflow-y:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="background:var(--surface)"><th style="padding:6px 8px;text-align:left">프로젝트 ID</th><th style="padding:6px 8px;text-align:left">이름</th><th style="padding:6px 8px;text-align:left">상태</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+  document.getElementById('deleteModal').style.display='flex';
+}
+
+async function confirmDelete() {
+  const pids=[...SELECTED_PIDS];
+  const btn=document.getElementById('confirmDelBtn');
+  btn.disabled=true; btn.textContent='삭제 중...';
+  document.getElementById('delProgress').style.display='block';
+  document.getElementById('delResultArea').innerHTML='';
+
+  const res=await fetch('/api/projects/delete',{
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({project_ids:pids})
+  }).then(r=>r.json());
+
+  document.getElementById('delProgress').style.display='none';
+  const results=res.results||[];
+  const succeed=results.filter(r=>r.success);
+  const failed=results.filter(r=>!r.success);
+
+  let html=`<div style="margin-top:12px;font-size:13px">`;
+  if(succeed.length) html+=`<div style="color:#1e7e34;margin-bottom:6px">✅ 삭제 완료: ${succeed.map(r=>r.project_id).join(', ')}</div>`;
+  if(failed.length)  html+=failed.map(r=>`<div style="color:#c62828">❌ ${r.project_id}: ${r.message}</div>`).join('');
+  html+=`</div>`;
+  document.getElementById('delResultArea').innerHTML=html;
+
+  // 성공한 프로젝트를 로컬 데이터에서 제거
+  const succeededPids=new Set(succeed.map(r=>r.project_id));
+  ALL=ALL.filter(p=>!succeededPids.has(p.project_id));
+  succeededPids.forEach(pid=>SELECTED_PIDS.delete(pid));
+  applyFilters();
+  updateSelectionUI();
+
+  btn.disabled=false; btn.textContent='삭제 확인';
+  if(!failed.length) setTimeout(()=>closeModal('deleteModal'),1500);
+}
+
+// ── 리소스 탭 ────────────────────────────────────────────────────────
+const RES_KEYS=['vm','run','functions','gke','storage','sql','pubsub','vpc','lb','armor','marketplace'];
+const RES_META={
+  vm:{icon:'🖥',label:'Compute VM'},run:{icon:'☁',label:'Cloud Run'},
+  functions:{icon:'⚡',label:'Functions'},gke:{icon:'⎈',label:'GKE'},
+  storage:{icon:'🗄',label:'Storage'},sql:{icon:'🗃',label:'Cloud SQL'},
+  pubsub:{icon:'📨',label:'Pub/Sub'},
+  vpc:{icon:'🌐',label:'VPC Network'},lb:{icon:'⚖',label:'Load Balancer'},
+  armor:{icon:'🛡',label:'Cloud Armor'},marketplace:{icon:'🏪',label:'Marketplace'},
+};
+
+function setResData(projects, lastScan) {
+  RES_ALL=projects;
+  if(lastScan) document.getElementById('resLastScan').textContent='마지막 스캔: '+lastScan;
+  updateResSummaryCards();
+  buildResBillingFilter();
+  applyResFilters();
+}
+
+function buildResBillingFilter() {
+  const accounts=[...new Set(RES_ALL.filter(p=>p.billing_account_name).map(p=>p.billing_account_name))].sort();
+  const sel=document.getElementById('resBillingAccountFilter');
+  const cur=sel.value;
+  sel.innerHTML='<option value="">전체 빌링 계정</option>';
+  accounts.forEach(name=>{
+    const o=document.createElement('option');
+    o.value=name; o.textContent=name;
+    if(name===cur) o.selected=true;
+    sel.appendChild(o);
+  });
+}
+
+function updateResSummaryCards() {
+  const map={vm:'rVM',run:'rRun',functions:'rFn',gke:'rGKE',
+    storage:'rSt',sql:'rSQL',pubsub:'rPS',
+    vpc:'rVPC',lb:'rLB',armor:'rArmor',marketplace:'rMkt'};
+  Object.entries(map).forEach(([k,id])=>{
+    const total=RES_ALL.reduce((s,p)=>s+(p.resources?.[k]||0),0);
+    document.getElementById(id).textContent=total.toLocaleString();
+  });
+}
+
+function applyResFilters() {
+  const q=document.getElementById('resSearch').value.toLowerCase();
+  const ba=document.getElementById('resBillingAccountFilter').value;
+  const bs=document.getElementById('resBillingStatusFilter').value;
+  const f=document.getElementById('resFilter').value;
+  RES_FILTERED=RES_ALL.filter(p=>{
+    if(q&&![p.project_id,p.name,p.billing_account_name].join(' ').toLowerCase().includes(q))return false;
+    if(ba&&p.billing_account_name!==ba)return false;
+    if(bs==='OPEN'&&p.billing_open!=='True')return false;
+    if(bs==='CLOSED'&&p.billing_open!=='False')return false;
+    if(f==='has'&&(p.total_resources||0)===0)return false;
+    if(f==='none'&&(p.total_resources||0)>0)return false;
+    return true;
+  });
+  doResSort(); resPage=1; renderResTable();
+}
+
+function doResSort() {
+  RES_FILTERED.sort((a,b)=>{
+    let va, vb;
+    if(RES_KEYS.includes(resSortField)){va=a.resources?.[resSortField]||0;vb=b.resources?.[resSortField]||0;}
+    else if(resSortField==='total_resources'){va=a.total_resources||0;vb=b.total_resources||0;}
+    else{va=String(a[resSortField]||'').toLowerCase();vb=String(b[resSortField]||'').toLowerCase();return resSortAsc?va.localeCompare(vb,'ko'):vb.localeCompare(va,'ko');}
+    return resSortAsc?va-vb:vb-va;
+  });
+}
+
+function sortRes(field, th) {
+  if(resSortField===field) resSortAsc=!resSortAsc; else{resSortField=field;resSortAsc=false;}
+  document.querySelectorAll('#tab-resources thead th').forEach(t=>t.classList.remove('asc','desc'));
+  th.classList.add(resSortAsc?'asc':'desc');
+  doResSort(); renderResTable();
+}
+
+function renderResTable() {
+  const start=(resPage-1)*PER, slice=RES_FILTERED.slice(start,start+PER), total=RES_FILTERED.length;
+  document.getElementById('resTableInfo').innerHTML=
+    `총 <strong>${total.toLocaleString()}</strong>개 중 <strong>${start+1}–${Math.min(start+PER,total)}</strong>개 표시`;
+  if(!total){renderResEmpty('검색 결과가 없습니다.');document.getElementById('resPagination').innerHTML='';return;}
+  document.getElementById('resTbody').innerHTML=slice.map((p,i)=>{
+    const r=p.resources||{};
+    const tot=p.total_resources||0;
+    const bStat=p.billing_open==='True'
+      ?'<span class="dot-open" style="font-size:11px">● OPEN</span>'
+      :p.billing_open==='False'
+        ?'<span class="dot-closed" style="font-size:11px">● CLOSED</span>'
+        :'';
+    const bCell=p.billing_account_name
+      ?`<div class="billing-name">${p.billing_account_name} ${bStat}</div><div class="billing-id">${p.billing_account_id}</div>`
+      :'<span class="nd">—</span>';
+    const countCell=k=>{const v=r[k]||0;return `<td class="res-count ${v?'has':'zero'}" style="text-align:center">${v||'—'}</td>`;};
+    const totalCell=`<td style="text-align:center"><span class="res-total ${tot?'has':'zero'}">${tot||'—'}</span></td>`;
+    return `<tr style="cursor:pointer" onclick="showResDetail(${start+i})">
+      <td class="cell-pid">${p.project_id}</td>
+      <td class="cell-name">${p.name||'<span class="nd">—</span>'}</td>
+      <td>${bCell}</td>
+      ${RES_KEYS.map(k=>countCell(k)).join('')}${totalCell}</tr>`;
+  }).join('');
+  renderPagination('resPagination',total,resPage,n=>{resPage=n;renderResTable();});
+}
+
+function renderResEmpty(msg) {
+  document.getElementById('resTbody').innerHTML=
+    `<tr><td colspan="16"><div class="state-center"><div class="icon">📊</div><h3>데이터 없음</h3><p>${msg}</p></div></td></tr>`;
+}
+
+// ── 결제 관리 페이지 ─────────────────────────────────────────────────
+let BILL_MODE=''; // 'bigquery' | 'account_overview' | 'invoice'
+let INV_ALL=[], INV_FILTERED=[], invSortField='_total', invSortAsc=false, invPage=1;
+let ACCT_ALL=[], ACCT_FILTERED=[], acctSortField='project_count', acctSortAsc=false, acctPage=1;
+
+function loadBillingPage() {
+  fetch('/api/billing/costs').then(r=>r.json()).then(data=>{
+    if(data.status==='done'&&Object.keys(data.costs||{}).length){
+      COST_MAP=data.costs;
+      BILL_MODE=data.mode||'';
+      if(data.last_scan) document.getElementById('billLastScan').textContent=data.last_scan;
+      applyBillingMode();
+    }
+  });
+}
+
+function applyBillingMode() {
+  const banner=document.getElementById('billModeBanner');
+  ['billBqSection','billInvSection','billAcctSection'].forEach(id=>{
+    document.getElementById(id).style.display='none';
+  });
+  if(BILL_MODE==='account_overview'){
+    document.getElementById('billAcctSection').style.display='block';
+    document.getElementById('billModeIcon').textContent='🏦';
+    document.getElementById('billModeText').textContent=
+      '빌링 계정 현황 모드 — gcloud billing accounts list 기반. 비용 데이터는 BigQuery 익스포트 설정 후 조회 가능합니다.';
+    banner.style.display='flex';
+    setupAccountOverviewMode();
+  } else if(BILL_MODE==='invoice'){
+    document.getElementById('billInvSection').style.display='block';
+    document.getElementById('billModeIcon').textContent='📄';
+    document.getElementById('billModeText').textContent=
+      '인보이스 모드 — Cloud Billing API 인보이스 기준. 빌링 계정별 월 합계만 조회됩니다. 프로젝트별 상세 내역은 BigQuery 설정 후 재스캔하세요.';
+    banner.style.display='flex';
+    setupInvoiceMode();
+  } else if(BILL_MODE==='bigquery'){
+    document.getElementById('billInvSection').style.display='none';
+    document.getElementById('billBqSection').style.display='block';
+    document.getElementById('billModeIcon').textContent='📊';
+    document.getElementById('billModeText').textContent=
+      'BigQuery 모드 — 프로젝트별·서비스별 상세 비용 조회 중입니다.';
+    banner.style.display='flex';
+    mergeBillingData();
+  } else {
+    banner.style.display='none';
+  }
+}
+
+// ── BigQuery 모드 ─────────────────────────────────────────────────────
+function mergeBillingData() {
+  const billProjects = ALL.filter(p=>p.deletable==='빌링연결');
+  BILL_ALL = billProjects.map(p=>({...p, _cost: COST_MAP[p.project_id]||{}}));
+  Object.keys(COST_MAP).forEach(pid=>{
+    if(!BILL_ALL.find(p=>p.project_id===pid))
+      BILL_ALL.push({project_id:pid,name:pid,_cost:COST_MAP[pid],deletable:'빌링연결',owners:[],billing_account_name:'',billing_account_id:''});
+  });
+  updateBillCards('bigquery');
+  applyBillFilters();
+}
+
+function updateBillCards(mode) {
+  const items = mode==='invoice' ? INV_ALL : BILL_ALL;
+  const costs = items.map(p=>p._cost?._total||0);
+  const grandTotal = costs.reduce((s,v)=>s+v,0);
+  const maxIdx = costs.indexOf(Math.max(...costs));
+  const currency = Object.values(COST_MAP)[0]?._currency||'USD';
+  const month = Object.values(COST_MAP)[0]?._month||'';
+
+  document.getElementById('billTotalLabel').textContent='이번달 총 비용';
+  document.getElementById('billTotal').textContent=formatCost(grandTotal,currency);
+  document.getElementById('billMonth').textContent=month?month+' 기준':'';
+  document.getElementById('billProjectCount').textContent=items.length.toLocaleString();
+  document.getElementById('billCountLabel').textContent=mode==='invoice'?'빌링 계정 수':'조회된 프로젝트 수';
+  document.getElementById('billTopLabel').textContent=mode==='invoice'?'가장 비싼 빌링 계정':'가장 비싼 프로젝트';
+  if(maxIdx>=0){
+    const tp=items[maxIdx];
+    document.getElementById('billTopProject').textContent=
+      tp.billing_account_name||tp.name||tp.project_id||tp.billing_account_id;
+    document.getElementById('billTopCost').textContent=formatCost(tp._cost?._total||0,currency);
+  }
+}
+
+function applyBillFilters() {
+  const q=document.getElementById('billSearch').value.toLowerCase();
+  const f=document.getElementById('billFilter').value;
+  BILL_FILTERED=BILL_ALL.filter(p=>{
+    if(q&&![p.project_id,p.name,p.billing_account_name].join(' ').toLowerCase().includes(q))return false;
+    const tot=p._cost?._total||0;
+    if(f==='has'&&!tot)return false;
+    if(f==='none'&&tot)return false;
+    return true;
+  });
+  doBillSort(); billPage=1; renderBillTable();
+}
+
+function doBillSort() {
+  BILL_FILTERED.sort((a,b)=>{
+    if(billSortField==='_total')
+      return billSortAsc?(a._cost?._total||0)-(b._cost?._total||0):(b._cost?._total||0)-(a._cost?._total||0);
+    const va=String(a[billSortField]||'').toLowerCase();
+    const vb=String(b[billSortField]||'').toLowerCase();
+    return billSortAsc?va.localeCompare(vb,'ko'):vb.localeCompare(va,'ko');
+  });
+}
+
+function sortBill(field, th) {
+  if(billSortField===field) billSortAsc=!billSortAsc; else{billSortField=field;billSortAsc=field!=='_total';}
+  document.querySelectorAll('#billBqSection thead th').forEach(t=>t.classList.remove('asc','desc'));
+  th.classList.add(billSortAsc?'asc':'desc');
+  doBillSort(); renderBillTable();
+}
+
+function renderBillTable() {
+  const start=(billPage-1)*PER, slice=BILL_FILTERED.slice(start,start+PER), total=BILL_FILTERED.length;
+  document.getElementById('billTableInfo').innerHTML=
+    `총 <strong>${total.toLocaleString()}</strong>개 중 <strong>${start+1}–${Math.min(start+PER,total)}</strong>개 표시`;
+  if(!total){
+    document.getElementById('billTbody').innerHTML=
+      `<tr><td colspan="6"><div class="state-center"><div class="icon">💳</div><h3>데이터 없음</h3><p>빌링 스캔 버튼을 눌러 비용 데이터를 조회하세요.</p></div></td></tr>`;
+    document.getElementById('billPagination').innerHTML='';
+    return;
+  }
+  const currency=Object.values(COST_MAP)[0]?._currency||'USD';
+  document.getElementById('billTbody').innerHTML=slice.map((p,i)=>{
+    const cost=p._cost||{};
+    const tot=cost._total||0;
+    const bCell=p.billing_account_name
+      ?`<div class="billing-name">${p.billing_account_name}</div><div class="billing-id">${p.billing_account_id}</div>`
+      :'<span class="nd">—</span>';
+    const svcs=Object.entries(cost).filter(([k,v])=>!k.startsWith('_')&&v>0).sort((a,b)=>b[1]-a[1]).slice(0,3);
+    const topSvcs=svcs.map(([k,v])=>`<div class="top-svc">${k}: ${formatCost(v,currency)}</div>`).join('');
+    const months=Object.entries(cost._monthly||{}).sort((a,b)=>a[0].localeCompare(b[0])).slice(-3);
+    const trendHtml=months.map(([m,v])=>`<span style="font-size:11px;color:var(--t2);white-space:nowrap">${m.slice(5)}: ${formatCost(v,currency)}</span>`).join(' → ');
+    return `<tr style="cursor:pointer" onclick="showCostDetail(${start+i})">
+      <td class="cell-pid">${p.project_id}</td>
+      <td class="cell-name">${p.name||'<span class="nd">—</span>'}</td>
+      <td>${bCell}</td>
+      <td style="text-align:right"><span class="cost-cell ${costClass(tot)}">${formatCost(tot,currency)}</span></td>
+      <td>${topSvcs||'<span class="nd">—</span>'}</td>
+      <td style="text-align:center;font-size:11px;color:var(--t2)">${trendHtml||'—'}</td>
+    </tr>`;
+  }).join('');
+  renderPagination('billPagination',total,billPage,n=>{billPage=n;renderBillTable();});
+}
+
+// ── 빌링 계정 현황 모드 ──────────────────────────────────────────────
+function setupAccountOverviewMode() {
+  // COST_MAP 키 = billing_account_id, value = {display_name, open, currency, master_billing_account, project_count, project_ids}
+  ACCT_ALL = Object.entries(COST_MAP).map(([bid, d])=>({
+    billing_account_id:   bid,
+    display_name:         d.display_name || '—',
+    open:                 d.open,
+    currency:             d.currency || '',
+    master_billing_account: d.master_billing_account || '',
+    project_count:        d.project_count || 0,
+    project_ids:          d.project_ids || [],
+  })).sort((a,b)=>b.project_count - a.project_count);
+
+  // 요약 카드 갱신
+  const total   = ACCT_ALL.length;
+  const openCnt = ACCT_ALL.filter(a=>a.open).length;
+  const withProj= ACCT_ALL.filter(a=>a.project_count>0).length;
+  document.getElementById('billTotalLabel').textContent = '전체 빌링 계정';
+  document.getElementById('billTotal').textContent = total;
+  document.getElementById('billMonth').textContent = '';
+  document.getElementById('billProjectCount').textContent = openCnt;
+  document.getElementById('billCountLabel').textContent = 'OPEN 계정';
+  document.getElementById('billCountSub').textContent = `CLOSED ${total-openCnt}개`;
+  document.getElementById('billTopProject').textContent = withProj;
+  document.getElementById('billTopLabel').textContent = '프로젝트 보유 계정';
+  document.getElementById('billTopCost').textContent = `미보유 ${total-withProj}개`;
+
+  applyAcctFilters();
+}
+
+function applyAcctFilters() {
+  const q   = (document.getElementById('acctSearch')?.value||'').toLowerCase();
+  const os  = document.getElementById('acctOpenFilter')?.value||'';
+  const typ = document.getElementById('acctTypeFilter')?.value||'';
+  ACCT_FILTERED = ACCT_ALL.filter(a=>{
+    if(q && ![a.billing_account_id, a.display_name].join(' ').toLowerCase().includes(q)) return false;
+    if(os==='open'   && !a.open)  return false;
+    if(os==='closed' &&  a.open)  return false;
+    if(typ==='master'     && a.master_billing_account)  return false; // 상위 계정 없는 것 = 마스터
+    if(typ==='sub'        && !a.master_billing_account) return false;
+    if(typ==='standalone' && (a.master_billing_account || ACCT_ALL.some(x=>x.master_billing_account===a.billing_account_id))) return false;
+    return true;
+  });
+  doAcctSort(); acctPage=1; renderAcctTable();
+}
+
+function doAcctSort() {
+  ACCT_FILTERED.sort((a,b)=>{
+    if(acctSortField==='project_count')
+      return acctSortAsc ? a.project_count-b.project_count : b.project_count-a.project_count;
+    const va=String(a[acctSortField]||'').toLowerCase();
+    const vb=String(b[acctSortField]||'').toLowerCase();
+    return acctSortAsc ? va.localeCompare(vb,'ko') : vb.localeCompare(va,'ko');
+  });
+}
+
+function sortAcct(field, th) {
+  if(acctSortField===field) acctSortAsc=!acctSortAsc; else{acctSortField=field; acctSortAsc=field!=='project_count';}
+  document.querySelectorAll('#billAcctSection thead th').forEach(t=>t.classList.remove('asc','desc'));
+  th.classList.add(acctSortAsc?'asc':'desc');
+  doAcctSort(); renderAcctTable();
+}
+
+function renderAcctTable() {
+  const start=(acctPage-1)*PER, slice=ACCT_FILTERED.slice(start,start+PER), total=ACCT_FILTERED.length;
+  document.getElementById('acctTableInfo').innerHTML=
+    `빌링 계정 <strong>${total.toLocaleString()}</strong>개`;
+  if(!total){
+    document.getElementById('acctTbody').innerHTML=
+      `<tr><td colspan="7"><div class="state-center"><div class="icon">🏦</div><h3>데이터 없음</h3><p>빌링 스캔을 실행하세요.</p></div></td></tr>`;
+    document.getElementById('acctPagination').innerHTML='';
+    return;
+  }
+  // 마스터 계정 세트 (다른 계정의 master_billing_account로 참조되는 것)
+  const masterSet = new Set(ACCT_ALL.map(a=>a.master_billing_account).filter(Boolean));
+  document.getElementById('acctTbody').innerHTML = slice.map((a,i)=>{
+    const isMaster = masterSet.has(a.billing_account_id);
+    const isSub    = !!a.master_billing_account;
+    const typeTag  = isMaster
+      ? '<span style="background:#e8f0fe;color:#1967d2;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">마스터</span>'
+      : isSub
+        ? '<span style="background:#f3e8fd;color:#7b1fa2;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">Sub</span>'
+        : '<span style="background:#e6f4ea;color:#1e7e34;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">독립</span>';
+    const bStat = a.open
+      ? '<span class="dot-open">● OPEN</span>'
+      : '<span class="dot-closed">● CLOSED</span>';
+    const masterCell = a.master_billing_account
+      ? `<span style="font-family:monospace;font-size:12px;color:var(--t2)">${a.master_billing_account}</span>`
+      : '<span class="nd">—</span>';
+    const projCell = a.project_count > 0
+      ? `<strong style="color:var(--primary)">${a.project_count}</strong>개`
+      : '<span class="nd">0</span>';
+    return `<tr style="cursor:pointer" onclick="showAcctDetail(${start+i})">
+      <td class="cell-pid">${a.billing_account_id}</td>
+      <td class="cell-name">${a.display_name}</td>
+      <td style="text-align:center;font-size:12px;font-weight:600;color:var(--t2)">${a.currency||'—'}</td>
+      <td style="text-align:center">${typeTag}</td>
+      <td>${masterCell}</td>
+      <td style="text-align:center">${projCell}</td>
+      <td style="text-align:center">${bStat}</td>
+    </tr>`;
+  }).join('');
+  renderPagination('acctPagination', total, acctPage, n=>{acctPage=n; renderAcctTable();});
+}
+
+function showAcctDetail(idx) {
+  const a = ACCT_FILTERED[idx]; if(!a) return;
+  const masterSet = new Set(ACCT_ALL.map(x=>x.master_billing_account).filter(Boolean));
+  const isMaster  = masterSet.has(a.billing_account_id);
+  const subAccts  = ACCT_ALL.filter(x=>x.master_billing_account===a.billing_account_id);
+  // ALL에서 풍부한 데이터 우선, 없으면 project_ids 폴백
+  const projFromAll = (ALL||[]).filter(p=>p.billing_account_id===a.billing_account_id);
+  const projIds     = a.project_ids || [];
+  // ALL에 없는 project_id도 포함 (stub 형태)
+  const extraPids   = projIds.filter(pid=>!projFromAll.find(p=>p.project_id===pid));
+  const projList    = [
+    ...projFromAll,
+    ...extraPids.map(pid=>({project_id:pid, name:'', create_time:'', deletable:'', owners:[]}))
+  ];
+
+  const bStat = a.open ? '<span class="dot-open">● OPEN</span>' : '<span class="dot-closed">● CLOSED</span>';
+
+  const subRows = subAccts.length
+    ? subAccts.map(s=>`<tr style="cursor:pointer" onclick="closeModal('acctModal');setTimeout(()=>{const si=ACCT_ALL.findIndex(x=>x.billing_account_id==='${s.billing_account_id}');if(si>=0){ACCT_FILTERED=ACCT_ALL;showAcctDetail(si);}},100)">
+        <td class="cell-pid">${s.billing_account_id}</td>
+        <td>${s.display_name}</td>
+        <td style="text-align:center">${s.open?'<span class="dot-open">● OPEN</span>':'<span class="dot-closed">● CLOSED</span>'}</td>
+        <td style="text-align:center">${s.project_count}개</td>
+      </tr>`).join('')
+    : '<tr><td colspan="4" style="text-align:center;color:var(--t2)">하위 계정 없음</td></tr>';
+
+  const projRows = projList.length
+    ? projList.map(p=>{
+        const badge = p.deletable==='즉시 삭제 가능'
+          ? '<span class="badge badge-ok" style="font-size:10px">삭제가능</span>'
+          : p.deletable==='빌링연결'
+            ? '<span class="badge badge-billing" style="font-size:10px">빌링연결</span>'
+            : p.deletable
+              ? '<span class="badge badge-owner" style="font-size:10px">확인필요</span>'
+              : '';
+        const allIdx = ALL.findIndex(x=>x.project_id===p.project_id);
+        const clickable = allIdx >= 0;
+        return `<tr ${clickable?`style="cursor:pointer" onclick="closeModal('acctModal');setTimeout(()=>{FILTERED=ALL;const fi=ALL.findIndex(x=>x.project_id==='${p.project_id}');if(fi>=0)showDetail(fi);},100)"`:''}>
+          <td class="cell-pid">${p.project_id}</td>
+          <td class="cell-name">${p.name||'<span class="nd">—</span>'}</td>
+          <td style="text-align:center;font-size:12px;color:var(--t2)">${p.create_time||'—'}</td>
+          <td style="text-align:center">${badge}</td>
+        </tr>`;
+      }).join('')
+    : '<tr><td colspan="4" style="text-align:center;color:var(--t2)">연결된 프로젝트 없음</td></tr>';
+
+  const consoleReportsUrl = `https://console.cloud.google.com/billing/${a.billing_account_id}/reports`;
+  const consoleBudgetUrl  = `https://console.cloud.google.com/billing/${a.billing_account_id}/budgets`;
+
+  document.getElementById('acctModalTitle').textContent = a.display_name || a.billing_account_id;
+  document.getElementById('acctModalBody').innerHTML=`
+    <div style="display:flex;align-items:flex-start;gap:16px;margin-bottom:12px">
+      <div style="flex:1">
+        <div style="font-size:18px;font-weight:700">${a.display_name}</div>
+        <div style="font-family:monospace;font-size:13px;color:var(--t2);margin-top:4px">${a.billing_account_id}</div>
+        ${a.master_billing_account?`<div style="font-size:12px;color:var(--t2);margin-top:4px">상위 계정: <span style="font-family:monospace">${a.master_billing_account}</span></div>`:''}
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+        ${bStat}
+        ${isMaster?'<span style="background:#e8f0fe;color:#1967d2;padding:2px 10px;border-radius:10px;font-size:12px;font-weight:600">마스터 계정</span>':''}
+        <span style="font-size:13px;color:var(--t2)">통화: <strong>${a.currency||'—'}</strong></span>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:16px;padding:10px 14px;background:var(--surface);border-radius:8px;align-items:center">
+      <span style="font-size:13px;color:var(--t2);flex:1">비용 조회는 GCP 콘솔에서 확인 가능합니다</span>
+      <a href="${consoleReportsUrl}" target="_blank" class="action-btn blue" style="font-size:12px;padding:6px 14px;text-decoration:none">📊 Cost Reports</a>
+      <a href="${consoleBudgetUrl}" target="_blank" class="action-btn orange" style="font-size:12px;padding:6px 14px;text-decoration:none">🔔 예산 관리</a>
+    </div>
+    <div style="display:grid;grid-template-columns:${isMaster?'1fr 1fr':'1fr'};gap:16px">
+      ${isMaster?`<div>
+        <h4 style="margin:0 0 8px;font-size:13px;color:var(--t2)">하위 계정 (${subAccts.length}개)</h4>
+        <div style="max-height:200px;overflow-y:auto">
+          <table style="width:100%;border-collapse:collapse;font-size:12px">
+            <thead><tr style="background:var(--surface);position:sticky;top:0">
+              <th style="padding:4px 8px;text-align:left">계정 ID</th><th style="padding:4px 8px;text-align:left">이름</th>
+              <th style="padding:4px 8px;text-align:center">상태</th><th style="padding:4px 8px;text-align:center">프로젝트</th>
+            </tr></thead>
+            <tbody>${subRows}</tbody>
+          </table>
+        </div>
+      </div>`:''}
+      <div>
+        <h4 style="margin:0 0 8px;font-size:13px;color:var(--t2)">연결된 프로젝트 <strong style="color:var(--text)">${projList.length}개</strong>
+          ${projList.length>0&&ALL.length>0?'<span style="font-size:11px;font-weight:400;color:var(--t3)">&nbsp;(클릭하면 상세보기)</span>':''}
+        </h4>
+        <div style="max-height:320px;overflow-y:auto">
+          <table style="width:100%;border-collapse:collapse;font-size:12px">
+            <thead><tr style="background:var(--surface);position:sticky;top:0">
+              <th style="padding:4px 8px;text-align:left">프로젝트 ID</th>
+              <th style="padding:4px 8px;text-align:left">이름</th>
+              <th style="padding:4px 8px;text-align:center">생성일</th>
+              <th style="padding:4px 8px;text-align:center">상태</th>
+            </tr></thead>
+            <tbody>${projRows}</tbody>
+          </table>
+        </div>
+        <p style="font-size:11px;color:var(--t2);margin-top:8px">※ 실제 비용 데이터는 BigQuery 빌링 익스포트 설정 후 조회 가능합니다.</p>
+      </div>
+    </div>`;
+  openModal('acctModal');
+}
+
+// ── 인보이스 모드 ─────────────────────────────────────────────────────
+function setupInvoiceMode() {
+  INV_ALL = Object.entries(COST_MAP).map(([bid, costData])=>{
+    const projects = ALL.filter(p=>p.billing_account_id===bid);
+    const matchProj = projects[0];
+    return {
+      billing_account_id:   bid,
+      billing_account_name: matchProj?.billing_account_name || bid,
+      billing_open:         matchProj?.billing_open || '',
+      project_count:        projects.length,
+      projects:             projects,
+      _cost:                costData,
+    };
+  }).sort((a,b)=>(b._cost._total||0)-(a._cost._total||0));
+
+  // 모든 계정이 오류(404 등)인 경우 BigQuery 안내 배너 표시
+  const allFailed = INV_ALL.length > 0 && INV_ALL.every(a => a._cost?._error);
+  document.getElementById('invNoBqBanner').style.display = allFailed ? 'block' : 'none';
+
+  updateBillCards('invoice');
+  applyInvFilters();
+}
+
+function applyInvFilters() {
+  const q=document.getElementById('invSearch').value.toLowerCase();
+  INV_FILTERED=INV_ALL.filter(a=>{
+    if(q&&![a.billing_account_id,a.billing_account_name].join(' ').toLowerCase().includes(q))return false;
+    return true;
+  });
+  doInvSort(); invPage=1; renderInvTable();
+}
+
+function doInvSort() {
+  INV_FILTERED.sort((a,b)=>{
+    if(invSortField==='_total')
+      return invSortAsc?(a._cost?._total||0)-(b._cost?._total||0):(b._cost?._total||0)-(a._cost?._total||0);
+    if(invSortField==='project_count')
+      return invSortAsc?a.project_count-b.project_count:b.project_count-a.project_count;
+    const va=String(a[invSortField]||'').toLowerCase();
+    const vb=String(b[invSortField]||'').toLowerCase();
+    return invSortAsc?va.localeCompare(vb,'ko'):vb.localeCompare(va,'ko');
+  });
+}
+
+function sortInv(field, th) {
+  if(invSortField===field) invSortAsc=!invSortAsc; else{invSortField=field;invSortAsc=field!=='_total';}
+  document.querySelectorAll('#billInvSection thead th').forEach(t=>t.classList.remove('asc','desc'));
+  th.classList.add(invSortAsc?'asc':'desc');
+  doInvSort(); renderInvTable();
+}
+
+function renderInvTable() {
+  const start=(invPage-1)*PER, slice=INV_FILTERED.slice(start,start+PER), total=INV_FILTERED.length;
+  document.getElementById('invTableInfo').innerHTML=
+    `빌링 계정 <strong>${total.toLocaleString()}</strong>개`;
+  if(!total){
+    document.getElementById('invTbody').innerHTML=
+      `<tr><td colspan="6"><div class="state-center"><div class="icon">💳</div><h3>데이터 없음</h3><p>빌링 스캔 버튼을 눌러 인보이스를 조회하세요.</p></div></td></tr>`;
+    document.getElementById('invPagination').innerHTML='';
+    return;
+  }
+  const currency=Object.values(COST_MAP)[0]?._currency||'USD';
+  document.getElementById('invTbody').innerHTML=slice.map((a,i)=>{
+    const cost=a._cost||{};
+    const tot=cost._total||0;
+    const months=Object.entries(cost._monthly||{}).sort((x,y)=>x[0].localeCompare(y[0])).slice(-3);
+    const trendHtml=months.map(([m,v])=>`<span style="font-size:11px;color:var(--t2);white-space:nowrap">${m.slice(5)}: ${formatCost(v,currency)}</span>`).join(' → ');
+    const bStat=a.billing_open==='True'?'<span class="dot-open">● OPEN</span>'
+      :a.billing_open==='False'?'<span class="dot-closed">● CLOSED</span>':'<span class="nd">—</span>';
+    const errBadge=cost._error?`<span style="color:#ea4335;font-size:11px" title="${cost._error}">⚠️ 오류</span>`:'';
+    return `<tr style="cursor:pointer" onclick="showInvDetail(${start+i})">
+      <td class="cell-pid">${a.billing_account_id}</td>
+      <td class="cell-name">${a.billing_account_name||'<span class="nd">—</span>'}</td>
+      <td style="text-align:center"><strong>${a.project_count}</strong>개</td>
+      <td style="text-align:right"><span class="cost-cell ${costClass(tot)}">${formatCost(tot,currency)}</span></td>
+      <td style="text-align:center;font-size:11px;color:var(--t2)">${trendHtml||'—'}</td>
+      <td style="text-align:center">${bStat} ${errBadge}</td>
+    </tr>`;
+  }).join('');
+  renderPagination('invPagination',total,invPage,n=>{invPage=n;renderInvTable();});
+}
+
+// ── 인보이스 모드 상세 모달 ────────────────────────────────────────────
+function showInvDetail(idx) {
+  const a = INV_FILTERED[idx]; if (!a) return;
+  const cost = a._cost || {};
+  const currency = cost._currency || 'USD';
+  const bStat = a.billing_open === 'True' ? '<span class="dot-open">● OPEN</span>'
+    : a.billing_open === 'False' ? '<span class="dot-closed">● CLOSED</span>' : '—';
+
+  // Monthly trend rows
+  const months = Object.entries(cost._monthly || {}).sort((x, y) => y[0].localeCompare(x[0]));
+  const monthRows = months.length
+    ? months.map(([m, v]) => `<tr><td>${m}</td><td style="text-align:right;font-weight:600">${formatCost(v, currency)}</td></tr>`).join('')
+    : '<tr><td colspan="2" style="text-align:center;color:var(--t2)">데이터 없음</td></tr>';
+
+  // Projects belonging to this billing account
+  const projList = (ALL || []).filter(p => p.billing_account_id === a.billing_account_id);
+  const projRows = projList.length
+    ? projList.map(p => `<tr>
+        <td class="cell-pid">${p.project_id}</td>
+        <td class="cell-name">${p.name || '<span class="nd">—</span>'}</td>
+        <td style="text-align:center">${p.create_time || '—'}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="3" style="text-align:center;color:var(--t2)">프로젝트 정보 없음</td></tr>';
+
+  const errHtml = cost._error
+    ? `<div style="margin:8px 0;padding:8px 12px;background:#fce8e6;border-radius:6px;color:#c62828;font-size:13px">⚠️ ${cost._error}</div>` : '';
+
+  document.getElementById('costModalTitle').textContent = a.billing_account_id;
+  document.getElementById('costModalBody').innerHTML = `
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+      <div>
+        <div style="font-size:18px;font-weight:700">${a.billing_account_id}</div>
+        <div style="font-size:14px;color:var(--t2)">${a.billing_account_name || ''}</div>
+      </div>
+      <div style="margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+        ${bStat}
+        <span style="font-size:22px;font-weight:700">${formatCost(cost._total || 0, currency)}</span>
+        <span style="font-size:12px;color:var(--t2)">${cost._month || ''} 기준</span>
+      </div>
+    </div>
+    ${errHtml}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div>
+        <h4 style="margin:0 0 8px;font-size:13px;color:var(--t2)">월별 청구 내역 (최근 6개월)</h4>
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead><tr style="background:var(--surface);font-size:12px">
+            <th style="padding:4px 8px;text-align:left">월</th>
+            <th style="padding:4px 8px;text-align:right">금액</th>
+          </tr></thead>
+          <tbody>${monthRows}</tbody>
+        </table>
+        <p style="font-size:11px;color:var(--t2);margin-top:8px">
+          ※ 인보이스 모드: 빌링 계정 단위 합산 금액입니다.<br>
+          프로젝트별 상세 내역은 BigQuery 익스포트 설정 후 재스캔하세요.
+        </p>
+      </div>
+      <div>
+        <h4 style="margin:0 0 8px;font-size:13px;color:var(--t2)">연결된 프로젝트 (${projList.length}개)</h4>
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead><tr style="background:var(--surface);font-size:12px">
+            <th style="padding:4px 8px;text-align:left">프로젝트 ID</th>
+            <th style="padding:4px 8px;text-align:left">이름</th>
+            <th style="padding:4px 8px;text-align:center">생성일</th>
+          </tr></thead>
+          <tbody>${projRows}</tbody>
+        </table>
+      </div>
+    </div>`;
+  openModal('costModal');
+}
+
+// ── 빌링 설정 & 스캔 ──────────────────────────────────────────────────
+async function saveBillingSettings() {
+  const bqProject=document.getElementById('bqProject').value.trim();
+  const bqDataset=document.getElementById('bqDataset').value.trim();
+  await fetch('/api/billing/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bq_project:bqProject,bq_dataset:bqDataset})});
+  const saved=document.getElementById('settingsSaved');
+  saved.style.display='inline';
+  setTimeout(()=>saved.style.display='none',3000);
+}
+
+async function startBillingScan() {
+  document.getElementById('billError').style.display='none';
+  const btn=document.getElementById('billScanBtn');
+  btn.disabled=true; btn.innerHTML='⏳ 스캔 중...';
+  document.getElementById('billProgress').classList.add('show');
+  const r=await fetch('/api/billing/scan',{method:'POST'}).then(r=>r.json());
+  if(r.status==='error'){
+    showBillError(r.message);
+    btn.disabled=false; btn.innerHTML='💳 빌링 스캔';
+    document.getElementById('billProgress').classList.remove('show');
+    return;
+  }
+  connectBillingSSE();
+}
+
+function showBillError(msg) {
+  const el=document.getElementById('billError');
+  el.textContent='⚠️ '+msg;
+  el.style.display='block';
+}
+
+function connectBillingSSE() {
+  const btn=document.getElementById('billScanBtn');
+  const es=new EventSource('/api/billing/stream');
+  es.onmessage=e=>{
+    const d=JSON.parse(e.data);
+    if(d.type==='progress'){
+      document.getElementById('bFill').style.width=d.pct+'%';
+      document.getElementById('bPct').textContent=d.pct+'%';
+      document.getElementById('bStage').textContent=d.stage;
+    } else if(d.type==='done'){
+      es.close();
+      document.getElementById('bFill').style.width='100%';
+      btn.disabled=false; btn.innerHTML='💳 빌링 스캔';
+      setTimeout(async()=>{
+        document.getElementById('billProgress').classList.remove('show');
+        const res=await fetch('/api/billing/costs').then(r=>r.json());
+        if(res.last_scan) document.getElementById('billLastScan').textContent=res.last_scan;
+        if(res.costs){
+          COST_MAP=res.costs; BILL_MODE=res.mode||d.mode||'';
+          applyBillingMode();
+        }
+      },1000);
+    } else if(d.type==='error'){
+      es.close();
+      showBillError(d.message);
+      btn.disabled=false; btn.innerHTML='💳 빌링 스캔';
+      document.getElementById('billProgress').classList.remove('show');
+    }
+  };
+  es.onerror=()=>{es.close();btn.disabled=false;btn.innerHTML='💳 빌링 스캔';};
+}
+
+// ── 모달: 프로젝트 상세 ───────────────────────────────────────────────
+function showDetail(idx) {
+  const p=FILTERED[idx]; if(!p)return;
+  const badge=p.deletable==='즉시 삭제 가능'?'<span class="badge badge-ok">즉시 삭제 가능</span>'
+    :p.deletable==='빌링연결'?'<span class="badge badge-billing">빌링연결</span>'
+    :'<span class="badge badge-owner">소유자 확인 필요</span>';
+  const bSt=p.billing_open==='True'?'<span class="dot-open">● OPEN</span>'
+    :p.billing_open==='False'?'<span class="dot-closed">● CLOSED</span>':'—';
+  const al=abandonedLevel(p);
+  const abBadge=al===2?'<span class="badge badge-abandon2">방치 가능성 높음</span>'
+    :al===1?'<span class="badge badge-abandon1">방치 의심</span>':'—';
+  const cmd=p.deletable==='즉시 삭제 가능'?`gcloud projects delete ${p.project_id} --quiet`
+    :p.deletable==='빌링연결'?`# 1. 빌링 연결 해제\ngcloud billing projects unlink ${p.project_id}\n\n# 2. 프로젝트 삭제\ngcloud projects delete ${p.project_id} --quiet`
+    :`# 소유자 확인 후 삭제\ngcloud projects get-iam-policy ${p.project_id}\ngcloud projects delete ${p.project_id} --quiet`;
+  // 리소스 현황 데이터 (리소스 스캔 완료된 경우)
+  const resData = RES_ALL.find(r=>r.project_id===p.project_id);
+  const resSection = resData ? (()=>{
+    const r=resData.resources||{};
+    const total=resData.total_resources||0;
+    const mkGrid=(keys)=>keys.map(k=>{
+      const cnt=r[k]||0;
+      return `<div class="res-mini ${cnt?'has-res':''}">
+        <div class="res-mini-icon">${RES_META[k].icon}</div>
+        <div class="res-mini-num">${cnt}</div>
+        <div class="res-mini-label">${RES_META[k].label}</div>
+      </div>`;
+    }).join('');
+    return `
+    <div class="modal-section">리소스 현황 <span style="font-size:12px;color:var(--t2);font-weight:400">총 ${total}개</span></div>
+    <div style="margin-bottom:6px;font-size:12px;color:var(--t2)">⚙️ 컴퓨팅</div>
+    <div class="res-grid" style="margin-bottom:12px">${mkGrid(['vm','run','functions','gke'])}</div>
+    <div style="margin-bottom:6px;font-size:12px;color:var(--t2)">🗄 데이터</div>
+    <div class="res-grid" style="margin-bottom:12px">${mkGrid(['storage','sql','pubsub'])}</div>
+    <div style="margin-bottom:6px;font-size:12px;color:var(--t2)">🌐 네트워크 / 기타</div>
+    <div class="res-grid" style="margin-bottom:4px">${mkGrid(['vpc','lb','armor','marketplace'])}</div>`;
+  })() : `
+    <div class="modal-section">리소스 현황</div>
+    <div style="padding:12px 0;font-size:13px;color:var(--t2)">
+      리소스 데이터가 없습니다.
+      ${p.deletable==='빌링연결'
+        ? '<br><span style="font-size:12px">리소스 현황 탭에서 스캔을 실행하세요.</span>'
+        : '<br><span style="font-size:12px">빌링이 연결된 프로젝트만 리소스 스캔이 가능합니다.</span>'}
+    </div>`;
+
+  document.getElementById('projModalTitle').textContent=p.name||p.project_id;
+  document.getElementById('projModalBody').innerHTML=`
+    <div class="modal-section">기본 정보</div>
+    <div class="modal-row"><div class="modal-label">프로젝트 ID</div><div class="modal-value" style="font-family:monospace">${p.project_id}</div></div>
+    <div class="modal-row"><div class="modal-label">프로젝트 이름</div><div class="modal-value">${p.name||'—'}</div></div>
+    <div class="modal-row"><div class="modal-label">생성일</div><div class="modal-value">${p.create_time}</div></div>
+    <div class="modal-row"><div class="modal-label">삭제 가능여부</div><div class="modal-value">${badge}</div></div>
+    <div class="modal-row"><div class="modal-label">방치 여부</div><div class="modal-value">${abBadge}</div></div>
+    <div class="modal-section">빌링 정보</div>
+    <div class="modal-row"><div class="modal-label">빌링 계정 ID</div><div class="modal-value" style="font-family:monospace">${p.billing_account_id||'—'}</div></div>
+    <div class="modal-row"><div class="modal-label">빌링 계정 이름</div><div class="modal-value">${p.billing_account_name||'—'}</div></div>
+    <div class="modal-row"><div class="modal-label">빌링 상태</div><div class="modal-value">${bSt}</div></div>
+    <div class="modal-section">소유자/편집자 (Owner/Editor)</div>
+    ${(p.owners||[]).length?(p.owners||[]).map(o=>`<div class="modal-row"><div class="modal-label"></div><div class="modal-value" style="font-family:monospace;font-size:12px">${o}</div></div>`).join('')
+      :'<div class="modal-row"><div class="modal-label"></div><div class="modal-value nd">소유자/편집자 없음</div></div>'}
+    ${resSection}
+    <div class="modal-section">삭제 명령어</div>
+    <div class="modal-cmd">${cmd}</div>`;
+  openModal('projectModal');
+}
+
+// ── 모달: 리소스 상세 ─────────────────────────────────────────────────
+function showResDetail(idx) {
+  const p=RES_FILTERED[idx]; if(!p)return;
+  const r=p.resources||{};
+  const bCell=p.billing_account_name
+    ?`${p.billing_account_name} <span style="color:var(--t3);font-family:monospace;font-size:11px">(${p.billing_account_id})</span>`
+    :p.billing_account_id||'—';
+  document.getElementById('resModalTitle').textContent=(p.name||p.project_id)+' — 리소스 현황';
+  document.getElementById('resModalBody').innerHTML=`
+    <div class="modal-section">프로젝트 정보</div>
+    <div class="modal-row"><div class="modal-label">프로젝트 ID</div><div class="modal-value" style="font-family:monospace">${p.project_id}</div></div>
+    <div class="modal-row"><div class="modal-label">빌링 계정</div><div class="modal-value">${bCell}</div></div>
+    <div class="modal-row"><div class="modal-label">총 리소스</div><div class="modal-value"><strong style="font-size:16px;color:var(--primary)">${p.total_resources||0}</strong>개</div></div>
+    <div class="modal-section">⚙️ 컴퓨팅</div>
+    <div class="res-grid">${['vm','run','functions','gke'].map(k=>{
+      const cnt=r[k]||0;
+      return `<div class="res-mini ${cnt?'has-res':''}"><div class="res-mini-icon">${RES_META[k].icon}</div><div class="res-mini-num">${cnt}</div><div class="res-mini-label">${RES_META[k].label}</div></div>`;
+    }).join('')}</div>
+    <div class="modal-section">🗄 데이터</div>
+    <div class="res-grid">${['storage','sql','pubsub'].map(k=>{
+      const cnt=r[k]||0;
+      return `<div class="res-mini ${cnt?'has-res':''}"><div class="res-mini-icon">${RES_META[k].icon}</div><div class="res-mini-num">${cnt}</div><div class="res-mini-label">${RES_META[k].label}</div></div>`;
+    }).join('')}</div>
+    <div class="modal-section">🌐 네트워크</div>
+    <div class="res-grid">${['vpc','lb','armor'].map(k=>{
+      const cnt=r[k]||0;
+      return `<div class="res-mini ${cnt?'has-res':''}"><div class="res-mini-icon">${RES_META[k].icon}</div><div class="res-mini-num">${cnt}</div><div class="res-mini-label">${RES_META[k].label}</div></div>`;
+    }).join('')}</div>
+    <div class="modal-section">🏪 기타</div>
+    <div class="res-grid">${['marketplace'].map(k=>{
+      const cnt=r[k]||0;
+      return `<div class="res-mini ${cnt?'has-res':''}"><div class="res-mini-icon">${RES_META[k].icon}</div><div class="res-mini-num">${cnt}</div><div class="res-mini-label">${RES_META[k].label}</div></div>`;
+    }).join('')}</div>
+    <div class="modal-section">콘솔에서 확인</div>
+    <div class="modal-cmd">https://console.cloud.google.com/home/dashboard?project=${p.project_id}</div>`;
+  openModal('resourceModal');
+}
+
+// ── 모달: 비용 상세 ───────────────────────────────────────────────────
+function showCostDetail(idx) {
+  const p=BILL_FILTERED[idx]; if(!p)return;
+  const cost=p._cost||{};
+  const tot=cost._total||0;
+  const currency=cost._currency||'USD';
+  const month=cost._month||'';
+  const svcs=Object.entries(cost).filter(([k,v])=>!k.startsWith('_')&&v>0).sort((a,b)=>b[1]-a[1]);
+  const monthly=cost._monthly||{};
+  const months=Object.entries(monthly).sort((a,b)=>a[0].localeCompare(b[0]));
+
+  const barsHtml=svcs.map(([svc,amt])=>{
+    const pct=tot?Math.round(amt/tot*100):0;
+    return `<div class="cost-bar-wrap">
+      <div class="cost-bar-label"><span>${svc}</span><span><strong>${formatCost(amt,currency)}</strong> (${pct}%)</span></div>
+      <div class="cost-bar-track"><div class="cost-bar-fill" style="width:${pct}%"></div></div>
+    </div>`;
+  }).join('');
+
+  const monthsHtml=months.map(([m,v])=>`<div class="cost-month-chip">
+    <div class="cm-m">${m}</div><div class="cm-v">${formatCost(v,currency)}</div>
+  </div>`).join('');
+
+  const bCell=p.billing_account_name
+    ?`${p.billing_account_name} (${p.billing_account_id})`:p.billing_account_id||'—';
+
+  document.getElementById('costModalTitle').textContent=(p.name||p.project_id)+' — 비용 상세';
+  document.getElementById('costModalBody').innerHTML=`
+    <div class="modal-section">프로젝트 정보</div>
+    <div class="modal-row"><div class="modal-label">프로젝트 ID</div><div class="modal-value" style="font-family:monospace">${p.project_id}</div></div>
+    <div class="modal-row"><div class="modal-label">빌링 계정</div><div class="modal-value">${bCell}</div></div>
+    <div class="modal-row"><div class="modal-label">기준 월</div><div class="modal-value">${month||'—'}</div></div>
+    <div class="modal-row"><div class="modal-label">총 비용</div><div class="modal-value"><strong style="font-size:20px;color:var(--primary)">${formatCost(tot,currency)}</strong></div></div>
+    ${svcs.length?`<div class="modal-section">서비스별 비용 (이번달)</div>${barsHtml}`:''}
+    ${months.length?`<div class="modal-section">월별 비용 추이 (최근 3개월)</div><div class="cost-monthly">${monthsHtml}</div>`:''}
+    <div class="modal-section">콘솔에서 확인</div>
+    <div class="modal-cmd">https://console.cloud.google.com/billing/${p.billing_account_id||''}/reports?project=${p.project_id}</div>`;
+  openModal('costModal');
+}
+
+// ── 공통 Pagination ────────────────────────────────────────────────────
+function renderPagination(elId, total, cur, goFn) {
+  const pages=Math.ceil(total/PER);
+  if(pages<=1){document.getElementById(elId).innerHTML='';return;}
+  const range=[];
+  for(let i=1;i<=pages;i++){
+    if(i===1||i===pages||Math.abs(i-cur)<=2)range.push(i);
+    else if(range[range.length-1]!=='…')range.push('…');
+  }
+  let html=`<button class="pg-btn" onclick="goPageHelper('${elId}',${cur-1})" ${cur===1?'disabled':''}>‹</button>`;
+  range.forEach(p=>{
+    if(p==='…')html+=`<span class="pg-btn" style="cursor:default;pointer-events:none">…</span>`;
+    else html+=`<button class="pg-btn ${p===cur?'active':''}" onclick="goPageHelper('${elId}',${p})">${p}</button>`;
+  });
+  html+=`<button class="pg-btn" onclick="goPageHelper('${elId}',${cur+1})" ${cur===pages?'disabled':''}>›</button>`;
+  document.getElementById(elId).innerHTML=html;
+}
+
+function goPageHelper(elId, n) {
+  if(elId==='pagination'){page=n;renderTable();}
+  else if(elId==='resPagination'){resPage=n;renderResTable();}
+  else if(elId==='billPagination'){billPage=n;renderBillTable();}
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+
+// ── 모달 공통 ─────────────────────────────────────────────────────────
+function openModal(id){document.getElementById(id).classList.add('show');}
+function closeModal(id){document.getElementById(id).classList.remove('show');}
+function closeModalOverlay(e,id){if(e.target===document.getElementById(id))closeModal(id);}
+
+// ── 프로젝트 스캔 SSE ─────────────────────────────────────────────────
+async function startScan() {
+  setScanningUI();
+  await fetch('/api/scan',{method:'POST'});
+  connectScanSSE();
+}
+function setScanningUI(){
+  const btn=document.getElementById('scanBtn');
+  btn.disabled=true;btn.innerHTML='⏳ 스캔 중...';
+  document.getElementById('scanProgress').classList.add('show');
+}
+function connectScanSSE(){
+  const es=new EventSource('/api/scan/stream');
+  es.onmessage=e=>{
+    const d=JSON.parse(e.data);
+    if(d.type==='progress'){
+      document.getElementById('sFill').style.width=d.pct+'%';
+      document.getElementById('sPct').textContent=d.pct+'%';
+      document.getElementById('sStage').textContent=d.stage;
+      if(d.done&&d.total)document.getElementById('sDetail').textContent=`${d.done.toLocaleString()} / ${d.total.toLocaleString()}`;
+    } else if(d.type==='done'){
+      es.close();
+      document.getElementById('sFill').style.width='100%';
+      document.getElementById('sPct').textContent='100%';
+      document.getElementById('sStage').textContent='완료!';
+      const btn=document.getElementById('scanBtn');btn.disabled=false;btn.innerHTML='🔄 재스캔';
+      setTimeout(async()=>{
+        document.getElementById('scanProgress').classList.remove('show');
+        const res=await fetch('/api/status').then(r=>r.json());
+        if(res.last_scan)document.getElementById('lastScanTag').textContent='마지막 스캔: '+res.last_scan;
+        if(res.projects)setProjectData(res.projects);
+      },1200);
+    } else if(d.type==='error'){
+      es.close();alert('스캔 오류: '+d.message);
+      const btn=document.getElementById('scanBtn');btn.disabled=false;btn.innerHTML='🔍 스캔 시작';
+      document.getElementById('scanProgress').classList.remove('show');
+    }
+  };
+  es.onerror=()=>{es.close();const btn=document.getElementById('scanBtn');btn.disabled=false;btn.innerHTML='🔍 스캔 시작';};
+}
+
+// ── 리소스 스캔 SSE ───────────────────────────────────────────────────
+async function startResScan(){
+  setResScanningUI();
+  const r=await fetch('/api/resources/scan',{method:'POST'}).then(r=>r.json());
+  if(r.status==='error'){
+    alert(r.message);
+    document.getElementById('resScanBtn').disabled=false;
+    document.getElementById('resScanBtn').innerHTML='🔎 리소스 스캔';
+    document.getElementById('resProgress').classList.remove('show');
+    return;
+  }
+  connectResSSE();
+}
+function setResScanningUI(){
+  const btn=document.getElementById('resScanBtn');
+  btn.disabled=true;btn.innerHTML='⏳ 스캔 중...';
+  document.getElementById('resProgress').classList.add('show');
+}
+function connectResSSE(){
+  const es=new EventSource('/api/resources/stream');
+  es.onmessage=e=>{
+    const d=JSON.parse(e.data);
+    if(d.type==='progress'){
+      document.getElementById('rFill').style.width=d.pct+'%';
+      document.getElementById('rPct').textContent=d.pct+'%';
+      document.getElementById('rStage').textContent=d.stage;
+      if(d.done&&d.total)document.getElementById('rDetail').textContent=`${d.done} / ${d.total} 프로젝트`;
+    } else if(d.type==='done'){
+      es.close();
+      document.getElementById('rFill').style.width='100%';
+      document.getElementById('rPct').textContent='100%';
+      document.getElementById('rStage').textContent='완료!';
+      const btn=document.getElementById('resScanBtn');btn.disabled=false;btn.innerHTML='🔄 재스캔';
+      setTimeout(async()=>{
+        document.getElementById('resProgress').classList.remove('show');
+        const res=await fetch('/api/resources').then(r=>r.json());
+        if(res.projects)setResData(res.projects,res.last_scan);
+      },1000);
+    } else if(d.type==='error'){
+      es.close();alert('리소스 스캔 오류: '+d.message);
+      const btn=document.getElementById('resScanBtn');btn.disabled=false;btn.innerHTML='🔎 리소스 스캔';
+      document.getElementById('resProgress').classList.remove('show');
+    }
+  };
+  es.onerror=()=>{es.close();const btn=document.getElementById('resScanBtn');btn.disabled=false;btn.innerHTML='🔎 리소스 스캔';};
+}
+
+// ── helpers ────────────────────────────────────────────────────────────
+function showEmpty(tbodyId, infoId, msg){
+  document.getElementById(tbodyId).innerHTML=
+    `<tr><td colspan="8"><div class="state-center"><div class="icon">☁️</div><h3>데이터 없음</h3><p>${msg}</p></div></td></tr>`;
+}
+
+init();
+</script>
+</body>
+</html>
