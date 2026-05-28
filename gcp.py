@@ -29,8 +29,16 @@ import google.auth.transport.requests
 class _TokenBucketLimiter:
     """스레드 안전 토큰 버킷 레이트 리미터.
 
-    acquire() 는 다음 허용 시각까지 sleep 한 뒤 반환한다.
-    여러 스레드가 동시에 호출하면 순서대로 슬롯을 배정받아 대기한다.
+    acquire() 는 자신의 슬롯을 한 번 배정받아 필요한 만큼 sleep 후 반환한다.
+    여러 스레드가 동시에 호출해도 각자 독립된 슬롯을 배정받으므로 기아(starvation) 없음.
+
+    [버그 수정] while True 루프를 제거.
+    이전 구현에서 200개 스레드가 동시에 acquire()를 호출하면:
+      - 각 스레드가 슬롯을 배정받고 sleep 하는 동안
+      - 다른 스레드들이 _next_allowed를 계속 앞으로 밀어냄
+      - 슬롯을 배정받은 스레드가 깨어나도 _next_allowed가 이미 훨씬 앞에 있어 또 sleep
+      - → 무한 재sleep → 사실상 1~2개 스레드만 실행되는 기아 발생
+    슬롯을 배정받으면 한 번만 sleep 하고 반환해야 함.
     """
     def __init__(self, rate_per_minute: int) -> None:
         self._interval: float = 60.0 / rate_per_minute
@@ -38,15 +46,17 @@ class _TokenBucketLimiter:
         self._next_allowed: float = 0.0
 
     def acquire(self) -> None:
-        while True:
-            with self._lock:
-                now = time.monotonic()
-                if now >= self._next_allowed:
-                    self._next_allowed = now + self._interval
-                    return
-                wait = self._next_allowed - now
-                self._next_allowed += self._interval
-            time.sleep(wait)
+        with self._lock:
+            now = time.monotonic()
+            if now >= self._next_allowed:
+                # 슬롯 즉시 사용 가능 → 대기 없이 반환
+                self._next_allowed = now + self._interval
+                return
+            # 슬롯 배정: _next_allowed가 이 스레드의 실행 시각
+            wait = self._next_allowed - now
+            self._next_allowed += self._interval
+        # 락 밖에서 sleep — 배정받은 슬롯까지만 1회 대기, 루프 없음
+        time.sleep(wait)
 
 
 # Cloud Billing API: 쿼터 ~700 req/min → 500 req/min 제한 (여유 200/min)
