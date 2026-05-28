@@ -671,20 +671,34 @@ function switchTab(name, btn) {
 }
 
 // ── 방치 프로젝트 판단 (클라이언트 사이드) ───────────────────────────
+// 점수 기준:
+//   사람 소유자(user:/group:) 없음  +2
+//   생성 후 1년 초과              +1  (누적)
+//   생성 후 2년 초과              +1
+//   생성 후 4년 초과              +1
+//   기본/무명 프로젝트명          +1
+//   test/temp/demo 등 키워드      +1
+//   CLOSED 빌링 계정 연결됨       +1
+// 임계값: score≥5 → 방치 가능성 높음(2), score≥3 → 방치 의심(1)
 function abandonedLevel(p) {
-  if (p.billing_enabled==='True' && p.billing_open==='True') return 0;
-  const ageDays = (Date.now() - new Date(p.create_time+'T00:00:00')) / 86400000;
-  const nameLow = (p.name||'').toLowerCase();
-  const userOwners = (p.owners||[]).filter(o=>o.startsWith('user:')).length;
+  // billing_enabled=True ↔ OPEN 빌링 → 활성 사용 중, 방치 아님
+  if (p.billing_enabled === 'True') return 0;
+
+  const ageDays = (Date.now() - new Date(p.create_time + 'T00:00:00')) / 86400000;
+  const nameLow = (p.name || '').toLowerCase();
+  // user: + group: 모두 사람 계정으로 집계 (group: = IAM 그룹)
+  const humanOwners = (p.owners || []).filter(o => o.startsWith('user:') || o.startsWith('group:')).length;
+
   let score = 0;
-  if (userOwners === 0) score += 2;
-  if (ageDays > 365)  score += 1;
-  if (ageDays > 730)  score += 1;
-  if (ageDays > 1460) score += 1;
-  if (!p.name || nameLow.startsWith('my project') || nameLow==='my first project') score += 1;
-  if (['test','temp','demo','sandbox','playground','sample','trial'].some(k=>nameLow.includes(k))) score += 1;
-  // CLOSED: billing_enabled=False이지만 billing_account_id 있음 → 방치 신호
-  if (p.billing_open==='False'||(p.billing_account_id&&p.billing_enabled!=='True')) score += 1;
+  if (humanOwners === 0) score += 2;        // 담당자 불명
+  if (ageDays > 365)    score += 1;         // 1년 이상
+  if (ageDays > 730)    score += 1;         // 2년 이상
+  if (ageDays > 1460)   score += 1;         // 4년 이상
+  if (!p.name || nameLow.startsWith('my project') || nameLow === 'my first project') score += 1;
+  if (['test','temp','demo','sandbox','playground','sample','trial'].some(k => nameLow.includes(k))) score += 1;
+  // CLOSED 빌링: 계정은 연결됐지만 비활성 → 방치 신호
+  if (p.billing_account_id && p.billing_enabled !== 'True') score += 1;
+
   if (score >= 5) return 2;
   if (score >= 3) return 1;
   return 0;
