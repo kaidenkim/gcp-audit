@@ -335,6 +335,15 @@ tr:hover td{background:#fafbfd;}
           <div class="res-card"><div class="res-card-icon">🛡</div> <div id="rArmor" class="res-card-num">—</div><div class="res-card-label">Cloud Armor</div></div>
         </div>
       </div>
+      <!-- IAM/로그 -->
+      <div class="res-section">
+        <div class="res-section-label">👤 IAM/로그</div>
+        <div class="res-cards res-cards-4">
+          <div class="res-card"><div class="res-card-icon">👤</div><div id="rSA"        class="res-card-num">—</div><div class="res-card-label">Service Account</div></div>
+          <div class="res-card"><div class="res-card-icon">📋</div><div id="rLogSink"   class="res-card-num">—</div><div class="res-card-label">Log Sink</div></div>
+          <div class="res-card"><div class="res-card-icon">📦</div><div id="rLogBucket" class="res-card-num">—</div><div class="res-card-label">Log Bucket</div></div>
+        </div>
+      </div>
       <!-- 기타 -->
       <div class="res-section">
         <div class="res-section-label">🏪 기타</div>
@@ -383,6 +392,7 @@ tr:hover td{background:#fafbfd;}
               <th style="text-align:center;background:#f0f4ff" colspan="4">⚙️ 컴퓨팅</th>
               <th style="text-align:center;background:#f0fff4" colspan="3">🗄 데이터</th>
               <th style="text-align:center;background:#fff3e0" colspan="3">🌐 네트워크</th>
+              <th style="text-align:center;background:#e8f5e9" colspan="3">👤 IAM/로그</th>
               <th style="text-align:center;background:#f3e5f5" colspan="1">🏪 기타</th>
               <th onclick="sortRes('total_resources',this)" class="desc" style="text-align:center">합계</th>
             </tr><tr>
@@ -397,6 +407,9 @@ tr:hover td{background:#fafbfd;}
               <th onclick="sortRes('vpc',this)"         style="text-align:center;background:#fff3e0">🌐VPC</th>
               <th onclick="sortRes('lb',this)"          style="text-align:center;background:#fff3e0">⚖LB</th>
               <th onclick="sortRes('armor',this)"       style="text-align:center;background:#fff3e0">🛡Armor</th>
+              <th onclick="sortRes('sa',this)"          style="text-align:center;background:#e8f5e9">👤SA</th>
+              <th onclick="sortRes('log_sink',this)"    style="text-align:center;background:#e8f5e9">📋Sink</th>
+              <th onclick="sortRes('log_bucket',this)"  style="text-align:center;background:#e8f5e9">📦Bkt</th>
               <th onclick="sortRes('marketplace',this)" style="text-align:center;background:#f3e5f5">🏪Mkt</th>
               <th class="no-sort"></th>
             </tr></thead>
@@ -453,7 +466,7 @@ tr:hover td{background:#fafbfd;}
       </div>
       <div class="bill-card">
         <div id="billTopLabel" class="bill-card-label">가장 비싼 항목</div>
-        <div id="billTopProject" class="bill-card-num" style="font-size:14px;margin-top:4px">—</div>
+        <div id="billTopProject" class="bill-card-num">—</div>
         <div id="billTopCost" class="bill-card-sub"></div>
       </div>
       <div class="bill-card" style="display:flex;flex-direction:column;justify-content:center;gap:10px">
@@ -998,14 +1011,16 @@ async function confirmDelete() {
 }
 
 // ── 리소스 탭 ────────────────────────────────────────────────────────
-const RES_KEYS=['vm','run','functions','gke','storage','sql','pubsub','vpc','lb','armor','marketplace'];
+const RES_KEYS=['vm','run','functions','gke','storage','sql','pubsub','vpc','lb','armor','sa','log_sink','log_bucket','marketplace'];
 const RES_META={
   vm:{icon:'🖥',label:'Compute VM'},run:{icon:'☁',label:'Cloud Run'},
   functions:{icon:'⚡',label:'Functions'},gke:{icon:'⎈',label:'GKE'},
   storage:{icon:'🗄',label:'Storage'},sql:{icon:'🗃',label:'Cloud SQL'},
   pubsub:{icon:'📨',label:'Pub/Sub'},
   vpc:{icon:'🌐',label:'VPC Network'},lb:{icon:'⚖',label:'Load Balancer'},
-  armor:{icon:'🛡',label:'Cloud Armor'},marketplace:{icon:'🏪',label:'Marketplace'},
+  armor:{icon:'🛡',label:'Cloud Armor'},
+  sa:{icon:'👤',label:'Service Account'},log_sink:{icon:'📋',label:'Log Sink'},log_bucket:{icon:'📦',label:'Log Bucket'},
+  marketplace:{icon:'🏪',label:'Marketplace'},
 };
 
 function setResData(projects, lastScan) {
@@ -1032,7 +1047,9 @@ function buildResBillingFilter() {
 function updateResSummaryCards() {
   const map={vm:'rVM',run:'rRun',functions:'rFn',gke:'rGKE',
     storage:'rSt',sql:'rSQL',pubsub:'rPS',
-    vpc:'rVPC',lb:'rLB',armor:'rArmor',marketplace:'rMkt'};
+    vpc:'rVPC',lb:'rLB',armor:'rArmor',
+    sa:'rSA',log_sink:'rLogSink',log_bucket:'rLogBucket',
+    marketplace:'rMkt'};
   Object.entries(map).forEach(([k,id])=>{
     const total=RES_ALL.reduce((s,p)=>s+(p.resources?.[k]||0),0);
     document.getElementById(id).textContent=total.toLocaleString();
@@ -1102,7 +1119,7 @@ function renderResTable() {
 
 function renderResEmpty(msg) {
   document.getElementById('resTbody').innerHTML=
-    `<tr><td colspan="16"><div class="state-center"><div class="icon">📊</div><h3>데이터 없음</h3><p>${msg}</p></div></td></tr>`;
+    `<tr><td colspan="19"><div class="state-center"><div class="icon">📊</div><h3>데이터 없음</h3><p>${msg}</p></div></td></tr>`;
 }
 
 // ── 결제 관리 페이지 ─────────────────────────────────────────────────
@@ -1264,18 +1281,21 @@ function setupAccountOverviewMode() {
   })).sort((a,b)=>b.project_count - a.project_count);
 
   // 요약 카드 갱신
-  const total   = ACCT_ALL.length;
-  const openCnt = ACCT_ALL.filter(a=>a.open).length;
-  const withProj= ACCT_ALL.filter(a=>a.project_count>0).length;
+  const total      = ACCT_ALL.length;
+  const openCnt    = ACCT_ALL.filter(a=> a.open).length;
+  const closedCnt  = total - openCnt;
+  const totalProj  = ACCT_ALL.reduce((s,a)=>s+a.project_count, 0);
+  const openProj   = ACCT_ALL.filter(a=> a.open).reduce((s,a)=>s+a.project_count, 0);
+  const closedProj = ACCT_ALL.filter(a=>!a.open).reduce((s,a)=>s+a.project_count, 0);
   document.getElementById('billTotalLabel').textContent = '전체 빌링 계정';
   document.getElementById('billTotal').textContent = total;
-  document.getElementById('billMonth').textContent = '';
-  document.getElementById('billProjectCount').textContent = openCnt;
+  document.getElementById('billMonth').textContent = `연결 프로젝트 ${totalProj.toLocaleString()}개`;
   document.getElementById('billCountLabel').textContent = 'OPEN 계정';
-  document.getElementById('billCountSub').textContent = `CLOSED ${total-openCnt}개`;
-  document.getElementById('billTopProject').textContent = withProj;
-  document.getElementById('billTopLabel').textContent = '프로젝트 보유 계정';
-  document.getElementById('billTopCost').textContent = `미보유 ${total-withProj}개`;
+  document.getElementById('billProjectCount').innerHTML = `<span style="color:#137333">${openCnt.toLocaleString()}</span>개`;
+  document.getElementById('billCountSub').textContent = `연결 프로젝트 ${openProj.toLocaleString()}개`;
+  document.getElementById('billTopLabel').textContent = 'CLOSED 계정';
+  document.getElementById('billTopProject').innerHTML = `<span style="color:#b06000">${closedCnt.toLocaleString()}</span>개`;
+  document.getElementById('billTopCost').textContent = `연결 프로젝트 ${closedProj.toLocaleString()}개`;
 
   applyAcctFilters();
 }
@@ -1763,6 +1783,11 @@ function showResDetail(idx) {
     }).join('')}</div>
     <div class="modal-section">🌐 네트워크</div>
     <div class="res-grid">${['vpc','lb','armor'].map(k=>{
+      const cnt=r[k]||0;
+      return `<div class="res-mini ${cnt?'has-res':''}"><div class="res-mini-icon">${RES_META[k].icon}</div><div class="res-mini-num">${cnt}</div><div class="res-mini-label">${RES_META[k].label}</div></div>`;
+    }).join('')}</div>
+    <div class="modal-section">👤 IAM/로그</div>
+    <div class="res-grid">${['sa','log_sink','log_bucket'].map(k=>{
       const cnt=r[k]||0;
       return `<div class="res-mini ${cnt?'has-res':''}"><div class="res-mini-icon">${RES_META[k].icon}</div><div class="res-mini-num">${cnt}</div><div class="res-mini-label">${RES_META[k].label}</div></div>`;
     }).join('')}</div>

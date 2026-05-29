@@ -372,11 +372,14 @@ def get_project_resources(pid: str, session) -> dict:
         "lb":          (_res_count_aggregated, f"{compute}/aggregated/forwardingRules",    "forwardingRules"),
         "armor":       (_res_count_list,       f"{compute}/global/securityPolicies",       "items"),
         "marketplace": (_res_count_list,       f"https://www.googleapis.com/deploymentmanager/v2/projects/{pid}/global/deployments", "deployments"),
+        "sa":          (_res_count_list,       f"https://iam.googleapis.com/v1/projects/{pid}/serviceAccounts", "accounts"),
+        "log_sink":    (_res_count_list,       f"https://logging.googleapis.com/v2/projects/{pid}/sinks", "sinks"),
+        "log_bucket":  (_res_count_list,       f"https://logging.googleapis.com/v2/projects/{pid}/locations/-/buckets", "buckets"),
     }
 
     results: dict[str, int] = {}
-    # max_workers=11: 11개 엔드포인트를 전부 동시에 요청 (6→11, 2배치→1배치)
-    with ThreadPoolExecutor(max_workers=11) as ex:
+    # 체크 항목 수만큼 동시 실행 (현재 14개)
+    with ThreadPoolExecutor(max_workers=len(checks)) as ex:
         futs = {ex.submit(fn, session, url, key): rk
                 for rk, (fn, url, key) in checks.items()}
         for f in as_completed(futs):
