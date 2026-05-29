@@ -235,16 +235,28 @@ def fetch_billing_accounts(projects: list[dict], on_progress=None) -> dict:
         }
     }
     """
-    from google.cloud import billing_v1
+    import google.auth.transport.requests
+    from requests.adapters import HTTPAdapter
     from gcp import _get_credentials
 
     if on_progress:
-        on_progress(5, "빌링 계정 목록 조회 중 (SDK)...")
+        on_progress(5, "빌링 계정 목록 조회 중...")
 
+    # REST API 사용: gRPC billing_v1은 EC2 gcloud 토큰 환경에서 ACCESS_TOKEN_TYPE_UNSUPPORTED
     try:
         creds = _get_credentials()
-        client = billing_v1.CloudBillingClient(credentials=creds)
-        accounts_raw = list(client.list_billing_accounts())
+        session = google.auth.transport.requests.AuthorizedSession(creds)
+        session.mount("https://", HTTPAdapter(pool_connections=5, pool_maxsize=20))
+
+        accounts_raw = []
+        url: str | None = "https://cloudbilling.googleapis.com/v1/billingAccounts"
+        while url:
+            r = session.get(url, timeout=15)
+            r.raise_for_status()
+            data = r.json()
+            accounts_raw.extend(data.get("billingAccounts", []))
+            pt = data.get("nextPageToken")
+            url = f"https://cloudbilling.googleapis.com/v1/billingAccounts?pageToken={pt}" if pt else None
     except Exception as e:
         raise RuntimeError(f"빌링 계정 목록 조회 실패: {e}")
 
@@ -266,16 +278,15 @@ def fetch_billing_accounts(projects: list[dict], on_progress=None) -> dict:
 
     result: dict = {}
     for acc in accounts_raw:
-        bid = acc.name.replace("billingAccounts/", "") if acc.name else ""
+        bid = acc.get("name", "").replace("billingAccounts/", "")
         if not bid:
             continue
-        master_id = acc.master_billing_account.replace("billingAccounts/", "") \
-            if acc.master_billing_account else ""
+        master_id = acc.get("masterBillingAccount", "").replace("billingAccounts/", "")
         pids = bid_to_pids.get(bid, [])
         result[bid] = {
-            "display_name":           acc.display_name,
-            "open":                   acc.open,
-            "currency":               getattr(acc, "currency_code", ""),
+            "display_name":           acc.get("displayName", ""),
+            "open":                   acc.get("open", False),
+            "currency":               acc.get("currencyCode", ""),
             "master_billing_account": master_id,
             "project_count":          len(pids),
             "project_ids":            pids,

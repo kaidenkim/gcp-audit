@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 # GCP Python SDK
-from google.cloud import resourcemanager_v3, billing_v1
+from google.cloud import resourcemanager_v3
 from google.api_core import exceptions as api_errors
 import google.auth
 import google.auth.transport.requests
@@ -192,34 +192,35 @@ def fetch_projects() -> list[dict]:
     return projects
 
 
-# ── 빌링 상태 (SDK) ───────────────────────────────────────────────────
-def _check_billing(pid: str, client: billing_v1.CloudBillingClient) -> dict:
-    """프로젝트 빌링 정보 조회. 일시적 오류 시 최대 3회 재시도(5s 간격).
+# ── 빌링 상태 (REST API) ──────────────────────────────────────────────
+# gRPC SDK(billing_v1)는 gcloud 토큰 폴백 환경(EC2 등)에서 ACCESS_TOKEN_TYPE_UNSUPPORTED
+# 오류가 발생한다. AuthorizedSession은 토큰을 Bearer 헤더로 전달하므로 항상 호환됨.
+def _check_billing(pid: str, session) -> dict:
+    """프로젝트 빌링 정보 REST 조회. 일시적 오류 시 최대 3회 재시도(5s 간격).
 
     반환 dict의 `_failed` 키:
       False → 정상 응답(빌링 없음 포함) 또는 영구 오류(권한 없음) → Stage 4 재시도 불필요
       True  → 3회 모두 일시적 예외 → Stage 4 재시도 대상
     """
+    url = f"https://cloudbilling.googleapis.com/v1/projects/{pid}/billingInfo"
     for attempt in range(3):
         if attempt:
-            time.sleep(5)          # 재시도 전 5초 대기 (서비스 복구 시간 확보)
-        _BILLING_LIM.acquire()     # 재시도도 레이트 리미터 통과
+            time.sleep(5)
+        _BILLING_LIM.acquire()
         try:
-            info = client.get_project_billing_info(
-                name=f"projects/{pid}", timeout=15, retry=None
-            )
-            bid = info.billing_account_name.replace("billingAccounts/", "") \
-                  if info.billing_account_name else ""
+            r = session.get(url, timeout=15)
+            if r.status_code in (403, 404):
+                return {"billing_enabled": "False", "billing_account_id": "", "_failed": False}
+            r.raise_for_status()
+            data = r.json()
+            bid = data.get("billingAccountName", "").replace("billingAccounts/", "")
             return {
-                "billing_enabled":    "True" if info.billing_enabled else "False",
+                "billing_enabled":    "True" if data.get("billingEnabled") else "False",
                 "billing_account_id": bid,
                 "_failed":            False,
             }
-        except (api_errors.PermissionDenied, api_errors.NotFound):
-            # 영구 오류(권한 없음 / 프로젝트 없음) → 재시도 불필요
-            return {"billing_enabled": "False", "billing_account_id": "", "_failed": False}
         except Exception:
-            pass    # 일시적 오류 → 루프 계속 (재시도)
+            pass
     return {"billing_enabled": "False", "billing_account_id": "", "_failed": True}
 
 
@@ -274,36 +275,48 @@ def _get_owners(pid: str, client: resourcemanager_v3.ProjectsClient):
     return _OWNERS_FAILED
 
 
-# ── 빌링 계정 정보 (SDK) ──────────────────────────────────────────────
-def _get_billing_account(bid: str, client: billing_v1.CloudBillingClient) -> dict:
-    """단일 빌링 계정 조회 (billing.accounts.get 권한 필요)."""
+# ── 빌링 계정 정보 (REST API) ─────────────────────────────────────────
+def _get_billing_account(bid: str, session) -> dict:
+    """단일 빌링 계정 REST 조회."""
     if not bid:
         return {"name": "", "open": ""}
     try:
-        acc = client.get_billing_account(name=f"billingAccounts/{bid}")
+        r = session.get(f"https://cloudbilling.googleapis.com/v1/billingAccounts/{bid}", timeout=15)
+        if r.status_code in (400, 403, 404):
+            return {"name": "", "open": ""}
+        r.raise_for_status()
+        acc = r.json()
         return {
-            "name": acc.display_name,
-            "open": str(acc.open),
+            "name": acc.get("displayName", ""),
+            "open": str(acc.get("open", "")),
         }
     except Exception:
         return {"name": "", "open": ""}
 
 
-def _list_all_billing_accounts(client: billing_v1.CloudBillingClient) -> dict[str, dict]:
-    """접근 가능한 모든 빌링 계정 목록 조회 (단일 API 호출, billing.accounts.list 권한).
+def _list_all_billing_accounts(session) -> dict[str, dict]:
+    """Cloud Billing REST API로 접근 가능한 모든 빌링 계정 목록 조회.
 
-    get_billing_account()는 계정별 billing.accounts.get 권한 필요 → 대부분 실패.
-    list_billing_accounts()는 한 번 호출로 접근 가능한 전체 계정 반환 → OPEN/CLOSED 포함.
-    Stage 2 병렬 요청(780개) 전에 선제 호출해야 quota 소진을 피할 수 있음.
+    gRPC SDK 대신 REST 사용: gcloud 토큰 폴백 환경(EC2)에서도 정상 동작.
     """
     result = {}
     try:
-        for acc in client.list_billing_accounts():
-            bid = acc.name.replace("billingAccounts/", "")
-            result[bid] = {
-                "name": acc.display_name,
-                "open": str(acc.open),
-            }
+        url: str | None = "https://cloudbilling.googleapis.com/v1/billingAccounts"
+        while url:
+            r = session.get(url, timeout=15)
+            if r.status_code in (400, 403, 404):
+                return result
+            r.raise_for_status()
+            data = r.json()
+            for acc in data.get("billingAccounts", []):
+                bid = acc.get("name", "").replace("billingAccounts/", "")
+                if bid:
+                    result[bid] = {
+                        "name": acc.get("displayName", ""),
+                        "open": str(acc.get("open", "")),
+                    }
+            pt = data.get("nextPageToken")
+            url = f"https://cloudbilling.googleapis.com/v1/billingAccounts?pageToken={pt}" if pt else None
     except Exception:
         pass
     return result
@@ -439,19 +452,19 @@ def full_scan(on_progress) -> list[dict]:
     on_progress(2, "인증 초기화 중...", 0, 0)
     creds = _get_credentials()
 
-    # gRPC 클라이언트 풀 — 병렬 생성으로 채널 핸드셰이크 시간 단축
-    # s3_client: Stage 3용 전용 클라이언트 (Stage 2 quota 소진 후 재사용 방지)
-    # _N 6→10: 200 워커 / 6 클라이언트 = 33 경합 → 200/10 = 20 경합으로 감소
+    # Billing API: REST 세션 사용 (gRPC billing_v1은 EC2 gcloud 토큰과 호환 불가)
+    # AuthorizedSession은 Bearer 헤더로 토큰을 전달 → 모든 환경에서 동작
     _N = 10
-    with ThreadPoolExecutor(max_workers=_N * 2 + 2) as _init_ex:
-        _bill_futs = [_init_ex.submit(billing_v1.CloudBillingClient, credentials=creds) for _ in range(_N)]
+    session = google.auth.transport.requests.AuthorizedSession(creds)
+    _s_adapter = HTTPAdapter(pool_connections=50, pool_maxsize=200)
+    session.mount("https://", _s_adapter)
+
+    # gRPC 클라이언트 풀 — IAM(소유자) 조회 전용, _N+1개 병렬 생성
+    with ThreadPoolExecutor(max_workers=_N + 1) as _init_ex:
         _rm_futs   = [_init_ex.submit(resourcemanager_v3.ProjectsClient, credentials=creds) for _ in range(_N)]
         _list_fut  = _init_ex.submit(resourcemanager_v3.ProjectsClient, credentials=creds)
-        _s3_fut    = _init_ex.submit(billing_v1.CloudBillingClient, credentials=creds)
-        bill_clients = [f.result() for f in _bill_futs]
         rm_clients   = [f.result() for f in _rm_futs]
         list_client  = _list_fut.result()
-        s3_client    = _s3_fut.result()
 
     # 빌링 계정 목록을 백그라운드에서 병렬 조회 시작
     # → 직렬 1-3s 낭비 제거: 메인 스캔(60s+)과 완전히 겹쳐서 실행
@@ -465,7 +478,7 @@ def full_scan(on_progress) -> list[dict]:
     _done = {"b": 0, "o": 0}
 
     def _billing_task(pid: str, idx: int) -> None:
-        r = _check_billing(pid, bill_clients[idx % _N])
+        r = _check_billing(pid, session)
         with _lock:
             billing_map[pid] = r
             _done["b"] += 1
@@ -520,7 +533,7 @@ def full_scan(on_progress) -> list[dict]:
     missing_bids = bid_set - set(account_cache.keys())
     if missing_bids:
         with ThreadPoolExecutor(max_workers=5) as ex:
-            futs = {ex.submit(_get_billing_account, bid, s3_client): bid for bid in missing_bids}
+            futs = {ex.submit(_get_billing_account, bid, session): bid for bid in missing_bids}
             for f in as_completed(futs):
                 info = f.result()
                 if info["name"] or info["open"]:
@@ -540,7 +553,7 @@ def full_scan(on_progress) -> list[dict]:
     if retry_pids:
         on_progress(93, f"실패 프로젝트 재조회 중... ({len(retry_pids)}개)", 0, 0)
         with ThreadPoolExecutor(max_workers=4) as ex:
-            b_futs = {ex.submit(_check_billing, pid, s3_client): pid for pid in failed_billing}
+            b_futs = {ex.submit(_check_billing, pid, session): pid for pid in failed_billing}
             o_futs = {ex.submit(_get_owners,    pid, rm_clients[0]): pid for pid in failed_owners}
             for f in as_completed({**b_futs, **o_futs}):
                 pid = (b_futs if f in b_futs else o_futs)[f]
