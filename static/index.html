@@ -721,7 +721,7 @@ async function init() {
   else if (statusRes.projects?.length) setProjectData(statusRes.projects);
   else showEmpty('tbody','tableInfo','스캔 시작 버튼을 눌러 GCP 프로젝트를 조회하세요.');
 
-  if (resRes.status==='scanning') { setResScanningUI(); connectResSSE(); }
+  if (resRes.status==='scanning') { setResScanningUI(); _resUpdateProgress({pct:resRes.pct||0,stage:resRes.stage||''}); connectResSSE(); }
   else if (resRes.projects?.length) setResData(resRes.projects, resRes.last_scan);
   else renderResEmpty('리소스 스캔 버튼을 눌러 빌링 연결 프로젝트의 리소스를 조회하세요.');
 
@@ -1905,33 +1905,66 @@ function setResScanningUI(){
   btn.disabled=true;btn.innerHTML='⏳ 스캔 중...';
   document.getElementById('resProgress').classList.add('show');
 }
+let _resPollTimer=null;
+function _resUpdateProgress(d){
+  document.getElementById('rFill').style.width=d.pct+'%';
+  document.getElementById('rPct').textContent=d.pct+'%';
+  document.getElementById('rStage').textContent=d.stage||'';
+  if(d.done&&d.total)document.getElementById('rDetail').textContent=`${d.done} / ${d.total} 프로젝트`;
+}
+function _resOnDone(){
+  if(_resPollTimer){clearInterval(_resPollTimer);_resPollTimer=null;}
+  document.getElementById('rFill').style.width='100%';
+  document.getElementById('rPct').textContent='100%';
+  document.getElementById('rStage').textContent='완료!';
+  const btn=document.getElementById('resScanBtn');btn.disabled=false;btn.innerHTML='🔄 재스캔';
+  setTimeout(async()=>{
+    document.getElementById('resProgress').classList.remove('show');
+    const res=await fetch('/api/resources').then(r=>r.json());
+    if(res.projects)setResData(res.projects,res.last_scan);
+  },1000);
+}
+function _resStartPolling(){
+  // SSE 실패 시 폴백: 3초마다 API 폴링으로 진행 상황 유지
+  if(_resPollTimer) return;
+  _resPollTimer=setInterval(async()=>{
+    try{
+      const d=await fetch('/api/resources').then(r=>r.json());
+      if(d.status==='scanning'){
+        _resUpdateProgress({pct:d.pct||0,stage:d.stage||'조회 중...',done:null,total:null});
+      } else if(d.status==='done'){
+        _resOnDone();
+      } else if(d.status==='error'){
+        clearInterval(_resPollTimer);_resPollTimer=null;
+        alert('리소스 스캔 오류: '+d.error);
+        const btn=document.getElementById('resScanBtn');btn.disabled=false;btn.innerHTML='🔎 리소스 스캔';
+        document.getElementById('resProgress').classList.remove('show');
+      }
+    }catch(e){}
+  },3000);
+}
 function connectResSSE(){
+  if(_resPollTimer){clearInterval(_resPollTimer);_resPollTimer=null;}
   const es=new EventSource('/api/resources/stream');
   es.onmessage=e=>{
     const d=JSON.parse(e.data);
     if(d.type==='progress'){
-      document.getElementById('rFill').style.width=d.pct+'%';
-      document.getElementById('rPct').textContent=d.pct+'%';
-      document.getElementById('rStage').textContent=d.stage;
-      if(d.done&&d.total)document.getElementById('rDetail').textContent=`${d.done} / ${d.total} 프로젝트`;
+      _resUpdateProgress(d);
     } else if(d.type==='done'){
       es.close();
-      document.getElementById('rFill').style.width='100%';
-      document.getElementById('rPct').textContent='100%';
-      document.getElementById('rStage').textContent='완료!';
-      const btn=document.getElementById('resScanBtn');btn.disabled=false;btn.innerHTML='🔄 재스캔';
-      setTimeout(async()=>{
-        document.getElementById('resProgress').classList.remove('show');
-        const res=await fetch('/api/resources').then(r=>r.json());
-        if(res.projects)setResData(res.projects,res.last_scan);
-      },1000);
+      _resOnDone();
     } else if(d.type==='error'){
-      es.close();alert('리소스 스캔 오류: '+d.message);
+      es.close();
+      alert('리소스 스캔 오류: '+d.message);
       const btn=document.getElementById('resScanBtn');btn.disabled=false;btn.innerHTML='🔎 리소스 스캔';
       document.getElementById('resProgress').classList.remove('show');
     }
   };
-  es.onerror=()=>{es.close();const btn=document.getElementById('resScanBtn');btn.disabled=false;btn.innerHTML='🔎 리소스 스캔';};
+  // SSE 오류 시 버튼 리셋 대신 폴링으로 전환 (스캔은 서버에서 계속 실행 중)
+  es.onerror=()=>{
+    es.close();
+    _resStartPolling();
+  };
 }
 
 // ── helpers ────────────────────────────────────────────────────────────

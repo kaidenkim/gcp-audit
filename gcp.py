@@ -352,7 +352,7 @@ def scan_billing_resources(billing_projects: list[dict], on_progress) -> list[di
         return {**p, "resources": resources, "total_resources": sum(resources.values())}
 
     results: list[dict] = []
-    with ThreadPoolExecutor(max_workers=3) as ex:
+    with ThreadPoolExecutor(max_workers=10) as ex:
         futs = {ex.submit(scan_one, p): p for p in billing_projects}
         done = 0
         for f in as_completed(futs):
