@@ -12,6 +12,7 @@ from google.cloud import resourcemanager_v3, billing_v1
 from google.api_core import exceptions as api_errors
 import google.auth
 import google.auth.transport.requests
+from requests.adapters import HTTPAdapter
 
 
 # ── 토큰 버킷 레이트 리미터 ────────────────────────────────────────────
@@ -59,10 +60,12 @@ class _TokenBucketLimiter:
         time.sleep(wait)
 
 
-# Cloud Billing API: 쿼터 ~700 req/min → 500 req/min 제한 (여유 200/min)
-_BILLING_LIM = _TokenBucketLimiter(500)
-# Resource Manager getIamPolicy: 쿼터 ~600 req/min → 500 req/min 제한
-_OWNER_LIM   = _TokenBucketLimiter(500)
+# Cloud Billing API: 쿼터 ~700 req/min → 650 req/min 제한 (여유 50/min)
+# 500→650: 500프로젝트 기준 60s → 46s (약 14s 단축)
+_BILLING_LIM = _TokenBucketLimiter(650)
+# Resource Manager getIamPolicy: 쿼터 ~600 req/min → 570 req/min 제한 (여유 30/min)
+# 500→570: 500프로젝트 기준 60s → 53s (약 7s 단축)
+_OWNER_LIM   = _TokenBucketLimiter(570)
 
 # ── gcloud (auth 표시 및 리소스 스캔용으로만 유지) ─────────────────────
 _GCLOUD_CANDIDATES = [
@@ -359,7 +362,8 @@ def get_project_resources(pid: str, session) -> dict:
     }
 
     results: dict[str, int] = {}
-    with ThreadPoolExecutor(max_workers=6) as ex:
+    # max_workers=11: 11개 엔드포인트를 전부 동시에 요청 (6→11, 2배치→1배치)
+    with ThreadPoolExecutor(max_workers=11) as ex:
         futs = {ex.submit(fn, session, url, key): rk
                 for rk, (fn, url, key) in checks.items()}
         for f in as_completed(futs):
@@ -373,13 +377,17 @@ def scan_billing_resources(billing_projects: list[dict], on_progress) -> list[di
 
     # AuthorizedSession 한 개를 전체 스캔에서 공유 → HTTP 연결 풀 재사용
     session = google.auth.transport.requests.AuthorizedSession(_get_credentials())
+    # 연결 풀 확장: max_workers=40 × inner 11 = 최대 440 동시 연결 대비
+    _adapter = HTTPAdapter(pool_connections=100, pool_maxsize=500)
+    session.mount("https://", _adapter)
 
     def scan_one(p: dict) -> dict:
         resources = get_project_resources(p["project_id"], session)
         return {**p, "resources": resources, "total_resources": sum(resources.values())}
 
     results: list[dict] = []
-    with ThreadPoolExecutor(max_workers=20) as ex:
+    # max_workers 20→40: 500프로젝트 기준 ~70s → ~35s
+    with ThreadPoolExecutor(max_workers=40) as ex:
         futs = {ex.submit(scan_one, p): p for p in billing_projects}
         done = 0
         for f in as_completed(futs):
@@ -433,7 +441,8 @@ def full_scan(on_progress) -> list[dict]:
 
     # gRPC 클라이언트 풀 — 병렬 생성으로 채널 핸드셰이크 시간 단축
     # s3_client: Stage 3용 전용 클라이언트 (Stage 2 quota 소진 후 재사용 방지)
-    _N = 6
+    # _N 6→10: 200 워커 / 6 클라이언트 = 33 경합 → 200/10 = 20 경합으로 감소
+    _N = 10
     with ThreadPoolExecutor(max_workers=_N * 2 + 2) as _init_ex:
         _bill_futs = [_init_ex.submit(billing_v1.CloudBillingClient, credentials=creds) for _ in range(_N)]
         _rm_futs   = [_init_ex.submit(resourcemanager_v3.ProjectsClient, credentials=creds) for _ in range(_N)]
@@ -444,9 +453,10 @@ def full_scan(on_progress) -> list[dict]:
         list_client  = _list_fut.result()
         s3_client    = _s3_fut.result()
 
-    # Stage 2 전 선제 조회: 할당량 소진 전에 빌링 계정 OPEN/CLOSED 정보 캐싱
-    on_progress(3, "빌링 계정 목록 사전 조회 중...", 0, 0)
-    account_cache: dict[str, dict] = _list_all_billing_accounts(s3_client)
+    # 빌링 계정 목록을 백그라운드에서 병렬 조회 시작
+    # → 직렬 1-3s 낭비 제거: 메인 스캔(60s+)과 완전히 겹쳐서 실행
+    _bg_ex = ThreadPoolExecutor(max_workers=1)
+    _account_cache_future = _bg_ex.submit(_list_all_billing_accounts, s3_client)
 
     billing_map: dict[str, dict] = {}
     owner_map:   dict[str, list[str]] = {}
@@ -476,10 +486,11 @@ def full_scan(on_progress) -> list[dict]:
 
     on_progress(3, "프로젝트 스트리밍 + 빌링/소유자 병렬 조회 시작...", 0, 0)
 
-    # search_projects 페이지 도착 즉시 billing/owner task 제출 (page_size=100 기본값 유지 → 첫 페이지 빨리 도착)
+    # page_size=1000: 500개 프로젝트를 1회 호출로 수신 (기본 100개씩 5회 → ~8s 낭비 제거)
+    _search_req = resourcemanager_v3.SearchProjectsRequest(page_size=1000)
     with ThreadPoolExecutor(max_workers=200) as ex:
         futures = []
-        for i, proj in enumerate(list_client.search_projects()):
+        for i, proj in enumerate(list_client.search_projects(request=_search_req)):
             pid = proj.project_id
             if pid.startswith("sys-"):
                 continue
@@ -498,6 +509,10 @@ def full_scan(on_progress) -> list[dict]:
                 f.result()
             except Exception:
                 pass
+
+    # 백그라운드로 실행한 billing accounts 목록 결과 수집 (메인 스캔과 완전히 겹쳐 실행됨)
+    account_cache: dict[str, dict] = _account_cache_future.result()
+    _bg_ex.shutdown(wait=False)
 
     # Stage 3 – 사전 조회에서 못 가져온 빌링 계정 OPEN/CLOSED 보완
     on_progress(90, "빌링 계정 OPEN/CLOSED 보완 중...", 0, 0)
