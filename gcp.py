@@ -306,40 +306,64 @@ def _list_all_billing_accounts(client: billing_v1.CloudBillingClient) -> dict[st
     return result
 
 
-# ── 리소스 조회 (gcloud 유지 — 수동 실행, 빈도 낮음) ─────────────────
-_RESOURCE_CHECKS: dict[str, list[str]] = {
-    "vm":          ["compute", "instances", "list", "--format=value(name)", "--quiet"],
-    "run":         ["run", "services", "list", "--platform=managed", "--format=value(metadata.name)", "--quiet"],
-    "functions":   ["functions", "list", "--format=value(name)", "--quiet"],
-    "gke":         ["container", "clusters", "list", "--format=value(name)", "--quiet"],
-    "storage":     ["storage", "buckets", "list", "--format=value(name)"],
-    "sql":         ["sql", "instances", "list", "--format=value(name)", "--quiet"],
-    "pubsub":      ["pubsub", "topics", "list", "--format=value(name)", "--quiet"],
-    "vpc":         ["compute", "networks", "list", "--format=value(name)", "--quiet"],
-    "lb":          ["compute", "forwarding-rules", "list", "--format=value(name)", "--quiet"],
-    "armor":       ["compute", "security-policies", "list", "--format=value(name)", "--quiet"],
-    "marketplace": ["deployment-manager", "deployments", "list", "--format=value(name)", "--quiet"],
-}
+# ── 리소스 조회 (REST API — gcloud CLI 대신 직접 호출로 교체) ──────────
+# gcloud CLI는 매 호출마다 Python 인터프리터를 새로 띄워 느리고 CPU 부하가 크다.
+# google.auth.transport.requests.AuthorizedSession을 재사용해 HTTP 연결을 공유한다.
+
+def _res_count_list(session, url: str, key: str) -> int:
+    """단순 목록 API (items/services/clusters 등) 항목 수 반환."""
+    try:
+        r = session.get(url, timeout=15)
+        if r.status_code in (400, 403, 404):
+            return 0
+        r.raise_for_status()
+        val = r.json().get(key)
+        return len(val) if isinstance(val, list) else 0
+    except Exception:
+        return 0
 
 
-def _count_lines(stdout: str) -> int:
-    return len([l for l in stdout.strip().splitlines() if l.strip()])
+def _res_count_aggregated(session, url: str, inner_key: str) -> int:
+    """Compute aggregated list (items.{zone}.{inner_key}) 항목 수 반환."""
+    try:
+        r = session.get(url, timeout=15)
+        if r.status_code in (400, 403, 404):
+            return 0
+        r.raise_for_status()
+        zones = r.json().get("items", {})
+        return sum(
+            len(v.get(inner_key, []))
+            for v in zones.values()
+            if isinstance(v, dict)
+        )
+    except Exception:
+        return 0
 
 
-def get_project_resources(pid: str) -> dict:
-    def check(key: str, base_args: list[str]) -> tuple[str, int]:
-        try:
-            stdout, _, _ = _gcloud(*base_args, f"--project={pid}", timeout=25)
-            return key, _count_lines(stdout)
-        except Exception:
-            return key, 0
+def get_project_resources(pid: str, session) -> dict:
+    """REST API로 프로젝트 리소스 조회. session = AuthorizedSession (스캔 전체 공유)."""
+    compute = f"https://compute.googleapis.com/compute/v1/projects/{pid}"
+
+    checks: dict[str, tuple] = {
+        "vm":          (_res_count_aggregated, f"{compute}/aggregated/instances",          "instances"),
+        "run":         (_res_count_list,       f"https://run.googleapis.com/v2/projects/{pid}/locations/-/services", "services"),
+        "functions":   (_res_count_list,       f"https://cloudfunctions.googleapis.com/v2/projects/{pid}/locations/-/functions", "functions"),
+        "gke":         (_res_count_list,       f"https://container.googleapis.com/v1/projects/{pid}/locations/-/clusters", "clusters"),
+        "storage":     (_res_count_list,       f"https://storage.googleapis.com/storage/v1/b?project={pid}", "items"),
+        "sql":         (_res_count_list,       f"https://sqladmin.googleapis.com/v1/projects/{pid}/instances", "items"),
+        "pubsub":      (_res_count_list,       f"https://pubsub.googleapis.com/v1/projects/{pid}/topics", "topics"),
+        "vpc":         (_res_count_list,       f"{compute}/global/networks",               "items"),
+        "lb":          (_res_count_aggregated, f"{compute}/aggregated/forwardingRules",    "forwardingRules"),
+        "armor":       (_res_count_list,       f"{compute}/global/securityPolicies",       "items"),
+        "marketplace": (_res_count_list,       f"https://www.googleapis.com/deploymentmanager/v2/projects/{pid}/global/deployments", "deployments"),
+    }
 
     results: dict[str, int] = {}
     with ThreadPoolExecutor(max_workers=6) as ex:
-        futs = {ex.submit(check, k, v): k for k, v in _RESOURCE_CHECKS.items()}
+        futs = {ex.submit(fn, session, url, key): rk
+                for rk, (fn, url, key) in checks.items()}
         for f in as_completed(futs):
-            key, cnt = f.result()
-            results[key] = cnt
+            results[futs[f]] = f.result()
     return results
 
 
@@ -347,12 +371,15 @@ def scan_billing_resources(billing_projects: list[dict], on_progress) -> list[di
     total = len(billing_projects)
     on_progress(2, f"리소스 조회 준비 중... (빌링 프로젝트 {total}개)", 0, total)
 
+    # AuthorizedSession 한 개를 전체 스캔에서 공유 → HTTP 연결 풀 재사용
+    session = google.auth.transport.requests.AuthorizedSession(_get_credentials())
+
     def scan_one(p: dict) -> dict:
-        resources = get_project_resources(p["project_id"])
+        resources = get_project_resources(p["project_id"], session)
         return {**p, "resources": resources, "total_resources": sum(resources.values())}
 
     results: list[dict] = []
-    with ThreadPoolExecutor(max_workers=10) as ex:
+    with ThreadPoolExecutor(max_workers=20) as ex:
         futs = {ex.submit(scan_one, p): p for p in billing_projects}
         done = 0
         for f in as_completed(futs):
