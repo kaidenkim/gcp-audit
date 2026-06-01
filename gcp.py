@@ -388,22 +388,65 @@ def get_project_resources(pid: str, session) -> dict:
 
 
 def scan_billing_resources(billing_projects: list[dict], on_progress) -> list[dict]:
+    """빌링 연결 프로젝트의 리소스를 스캔한다.
+
+    [중요] 동시 요청 수 제한: max_workers=5 (outer) × 14 (inner) = 70 동시 연결
+    이전에 max_workers=40으로 설정 시 40×14=560 동시 연결이 Google API 쿼터를
+    초과하여 모든 요청이 실패(0 반환)되는 문제가 발생. 5로 줄이면 148개 프로젝트도
+    약 45초 내에 안정적으로 완료됨.
+
+    [인증] AuthorizedSession 대신 plain requests.Session에 gcloud 토큰을 직접 주입.
+    동일한 AuthorizedSession 객체를 560개 스레드에서 공유 시 before_request() 경합
+    가능성 제거.
+    """
+    import requests as _requests
+
     total = len(billing_projects)
     on_progress(2, f"리소스 조회 준비 중... (빌링 프로젝트 {total}개)", 0, total)
 
-    # AuthorizedSession 한 개를 전체 스캔에서 공유 → HTTP 연결 풀 재사용
-    session = google.auth.transport.requests.AuthorizedSession(_get_credentials())
-    # 연결 풀 확장: max_workers=40 × inner 11 = 최대 440 동시 연결 대비
-    _adapter = HTTPAdapter(pool_connections=100, pool_maxsize=500)
-    session.mount("https://", _adapter)
+    # gcloud 토큰을 직접 헤더에 주입 → AuthorizedSession 공유 경합 없음
+    stdout, _, rc = _gcloud("auth", "print-access-token", timeout=15)
+    token = stdout.strip()
+    if rc != 0 or not token:
+        # ADC fallback
+        creds = _get_credentials()
+        req = google.auth.transport.requests.Request()
+        creds.refresh(req)
+        token = creds.token
+
+    def _make_session() -> _requests.Session:
+        s = _requests.Session()
+        s.headers.update({"Authorization": f"Bearer {token}"})
+        s.mount("https://", HTTPAdapter(pool_connections=20, pool_maxsize=100))
+        return s
+
+    # 토큰 발급 시각 기록 (45분 후 재발급)
+    _token_ts = [time.time()]
+    _session_store = [_make_session()]
+    _session_lock = threading.Lock()
+    _TOKEN_REFRESH = 45 * 60
+
+    def _get_session() -> _requests.Session:
+        with _session_lock:
+            if time.time() - _token_ts[0] > _TOKEN_REFRESH:
+                out, _, _ = _gcloud("auth", "print-access-token", timeout=15)
+                new_tok = out.strip()
+                if new_tok:
+                    ns = _requests.Session()
+                    ns.headers.update({"Authorization": f"Bearer {new_tok}"})
+                    ns.mount("https://", HTTPAdapter(pool_connections=20, pool_maxsize=100))
+                    _session_store[0] = ns
+                _token_ts[0] = time.time()
+            return _session_store[0]
 
     def scan_one(p: dict) -> dict:
-        resources = get_project_resources(p["project_id"], session)
+        resources = get_project_resources(p["project_id"], _get_session())
         return {**p, "resources": resources, "total_resources": sum(resources.values())}
 
     results: list[dict] = []
-    # max_workers 20→40: 500프로젝트 기준 ~70s → ~35s
-    with ThreadPoolExecutor(max_workers=40) as ex:
+    # max_workers=5: 5×14=70 동시 연결 → Google API 쿼터 내 안정 동작
+    # (40으로 높이면 560 동시 연결 → 쿼터 초과로 모두 0 반환됨)
+    with ThreadPoolExecutor(max_workers=5) as ex:
         futs = {ex.submit(scan_one, p): p for p in billing_projects}
         done = 0
         for f in as_completed(futs):
@@ -472,7 +515,7 @@ def full_scan(on_progress) -> list[dict]:
     # 빌링 계정 목록을 백그라운드에서 병렬 조회 시작
     # → 직렬 1-3s 낭비 제거: 메인 스캔(60s+)과 완전히 겹쳐서 실행
     _bg_ex = ThreadPoolExecutor(max_workers=1)
-    _account_cache_future = _bg_ex.submit(_list_all_billing_accounts, s3_client)
+    _account_cache_future = _bg_ex.submit(_list_all_billing_accounts, session)
 
     billing_map: dict[str, dict] = {}
     owner_map:   dict[str, list[str]] = {}

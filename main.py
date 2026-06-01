@@ -314,6 +314,60 @@ async def api_resources():
     }
 
 
+@app.get("/api/debug-scan")
+async def api_debug_scan(pid: str = "tokyo-apparatus-413602"):
+    """서버 컨텍스트에서 단일 프로젝트 리소스 스캔 디버그."""
+    import gcp as _gcp
+    import google.auth.transport.requests as _gat
+    from requests.adapters import HTTPAdapter as _HA
+
+    # 현재 credentials 정보
+    creds = _gcp._get_credentials()
+    creds_info = {
+        "type": type(creds).__name__,
+        "token_prefix": (creds.token or "")[:20] + "..." if creds.token else None,
+        "expiry": str(getattr(creds, "expiry", None)),
+        "valid": getattr(creds, "valid", None),
+        "expired": getattr(creds, "expired", None),
+    }
+
+    # AuthorizedSession으로 직접 테스트
+    session = _gat.AuthorizedSession(creds)
+    session.mount("https://", _HA(pool_connections=5, pool_maxsize=20))
+
+    raw_tests = {}
+    test_urls = {
+        "log_sink":   (f"https://logging.googleapis.com/v2/projects/{pid}/sinks", "sinks"),
+        "log_bucket": (f"https://logging.googleapis.com/v2/projects/{pid}/locations/-/buckets", "buckets"),
+        "sa":         (f"https://iam.googleapis.com/v1/projects/{pid}/serviceAccounts", "accounts"),
+        "run":        (f"https://run.googleapis.com/v2/projects/{pid}/locations/-/services", "services"),
+        "vpc":        (f"https://compute.googleapis.com/compute/v1/projects/{pid}/global/networks", "items"),
+    }
+    for name, (url, key) in test_urls.items():
+        try:
+            r = session.get(url, timeout=15)
+            body = r.json()
+            val = body.get(key)
+            raw_tests[name] = {
+                "status": r.status_code,
+                "count": len(val) if isinstance(val, list) else "N/A",
+                "keys": list(body.keys())[:10],
+            }
+        except Exception as e:
+            raw_tests[name] = {"error": str(e)}
+
+    # get_project_resources로도 테스트
+    resources = _gcp.get_project_resources(pid, session)
+
+    return {
+        "pid": pid,
+        "creds_info": creds_info,
+        "raw_tests": raw_tests,
+        "get_project_resources": resources,
+        "total": sum(resources.values()),
+    }
+
+
 # ── 빌링 비용 ─────────────────────────────────────────────────────────
 @app.get("/api/billing/settings")
 async def api_billing_settings_get():

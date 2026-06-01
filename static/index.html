@@ -525,6 +525,7 @@ tr:hover td{background:#fafbfd;}
           <option value="">전체 상태</option>
           <option value="open">OPEN만</option>
           <option value="closed">CLOSED만</option>
+          <option value="unknown">접근불가만</option>
         </select>
         <select id="acctTypeFilter" class="ctrl-select" onchange="applyAcctFilters()">
           <option value="">전체 유형</option>
@@ -1282,11 +1283,11 @@ function setupAccountOverviewMode() {
 
   // 요약 카드 갱신
   const total      = ACCT_ALL.length;
-  const openCnt    = ACCT_ALL.filter(a=> a.open).length;
+  const openCnt    = ACCT_ALL.filter(a=> a.open === true).length;
   const closedCnt  = total - openCnt;
   const totalProj  = ACCT_ALL.reduce((s,a)=>s+a.project_count, 0);
-  const openProj   = ACCT_ALL.filter(a=> a.open).reduce((s,a)=>s+a.project_count, 0);
-  const closedProj = ACCT_ALL.filter(a=>!a.open).reduce((s,a)=>s+a.project_count, 0);
+  const openProj   = ACCT_ALL.filter(a=> a.open === true).reduce((s,a)=>s+a.project_count, 0);
+  const closedProj = ACCT_ALL.filter(a=> a.open !== true).reduce((s,a)=>s+a.project_count, 0);
   document.getElementById('billTotalLabel').textContent = '전체 빌링 계정';
   document.getElementById('billTotal').textContent = total;
   document.getElementById('billMonth').textContent = `연결 프로젝트 ${totalProj.toLocaleString()}개`;
@@ -1306,8 +1307,9 @@ function applyAcctFilters() {
   const typ = document.getElementById('acctTypeFilter')?.value||'';
   ACCT_FILTERED = ACCT_ALL.filter(a=>{
     if(q && ![a.billing_account_id, a.display_name].join(' ').toLowerCase().includes(q)) return false;
-    if(os==='open'   && !a.open)  return false;
-    if(os==='closed' &&  a.open)  return false;
+    if(os==='open'    && a.open !== true)  return false;
+    if(os==='closed'  && a.open !== false) return false;
+    if(os==='unknown' && a.open !== null && a.open !== undefined) return false;
     if(typ==='master'     && a.master_billing_account)  return false; // 상위 계정 없는 것 = 마스터
     if(typ==='sub'        && !a.master_billing_account) return false;
     if(typ==='standalone' && (a.master_billing_account || ACCT_ALL.some(x=>x.master_billing_account===a.billing_account_id))) return false;
@@ -1353,9 +1355,11 @@ function renderAcctTable() {
       : isSub
         ? '<span style="background:#f3e8fd;color:#7b1fa2;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">Sub</span>'
         : '<span style="background:#e6f4ea;color:#1e7e34;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">독립</span>';
-    const bStat = a.open
+    const bStat = a.open === true
       ? '<span class="dot-open">● OPEN</span>'
-      : '<span class="dot-closed">● CLOSED</span>';
+      : a.open === false
+        ? '<span class="dot-closed">● CLOSED</span>'
+        : '<span style="color:#999;font-size:11px">접근불가</span>';
     const masterCell = a.master_billing_account
       ? `<span style="font-family:monospace;font-size:12px;color:var(--t2)">${a.master_billing_account}</span>`
       : '<span class="nd">—</span>';
@@ -1390,13 +1394,13 @@ function showAcctDetail(idx) {
     ...extraPids.map(pid=>({project_id:pid, name:'', create_time:'', deletable:'', owners:[]}))
   ];
 
-  const bStat = a.open ? '<span class="dot-open">● OPEN</span>' : '<span class="dot-closed">● CLOSED</span>';
+  const bStat = a.open === true ? '<span class="dot-open">● OPEN</span>' : a.open === false ? '<span class="dot-closed">● CLOSED</span>' : '<span style="color:#999;font-size:11px">접근불가</span>';
 
   const subRows = subAccts.length
     ? subAccts.map(s=>`<tr style="cursor:pointer" onclick="closeModal('acctModal');setTimeout(()=>{const si=ACCT_ALL.findIndex(x=>x.billing_account_id==='${s.billing_account_id}');if(si>=0){ACCT_FILTERED=ACCT_ALL;showAcctDetail(si);}},100)">
         <td class="cell-pid">${s.billing_account_id}</td>
         <td>${s.display_name}</td>
-        <td style="text-align:center">${s.open?'<span class="dot-open">● OPEN</span>':'<span class="dot-closed">● CLOSED</span>'}</td>
+        <td style="text-align:center">${s.open===true?'<span class="dot-open">● OPEN</span>':s.open===false?'<span class="dot-closed">● CLOSED</span>':'<span style="color:#999;font-size:11px">접근불가</span>'}</td>
         <td style="text-align:center">${s.project_count}개</td>
       </tr>`).join('')
     : '<tr><td colspan="4" style="text-align:center;color:var(--t2)">하위 계정 없음</td></tr>';

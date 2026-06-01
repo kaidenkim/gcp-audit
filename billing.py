@@ -293,6 +293,20 @@ def fetch_billing_accounts(projects: list[dict], on_progress=None) -> dict:
             "_mode":                  "account_overview",
         }
 
+    # 접근 불가 빌링 계정: list_billing_accounts에 없지만 프로젝트에 연결된 계정
+    known_bids = set(result.keys())
+    for bid, pids in bid_to_pids.items():
+        if bid not in known_bids:
+            result[bid] = {
+                "display_name":           f"(접근 불가) {bid}",
+                "open":                   None,
+                "currency":               "",
+                "master_billing_account": "",
+                "project_count":          len(pids),
+                "project_ids":            pids,
+                "_mode":                  "account_overview",
+            }
+
     if on_progress:
         on_progress(100, f"빌링 계정 {len(result)}개 조회 완료!")
     return result

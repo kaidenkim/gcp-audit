@@ -45,12 +45,28 @@ gRPC 클라이언트가 `RESOURCE_EXHAUSTED`에 대해 자동 재시도를 최�
 
 **해결책**:
 - `retry=None, timeout=15` — gRPC 자동 재시도 비활성화, 즉시 실패
-- `_BILLING_SEM = threading.Semaphore(12)` — billing API 동시 요청 12개 제한
-- `_OWNER_SEM   = threading.Semaphore(10)` — IAM API 동시 요청 10개 제한
+- `_TokenBucketLimiter(500)` — 분당 500 요청으로 정확히 제한 (Semaphore는 동시 요청 수만 제한, 속도 제어 불가)
 
 ```python
-_BILLING_SEM = threading.Semaphore(12)
-_OWNER_SEM   = threading.Semaphore(10)
+_BILLING_LIM = _TokenBucketLimiter(500)  # Cloud Billing: 쿼터 ~700 → 500/min
+_OWNER_LIM   = _TokenBucketLimiter(500)  # IAM getIamPolicy: 쿼터 ~600 → 500/min
+```
+
+**중요 버그 (해결됨)**: `_TokenBucketLimiter`의 `while True` 루프
+- 200개 스레드 동시 호출 시: 각 스레드가 슬롯 배정 후 sleep하는 동안 `_next_allowed`가 앞으로 밀림
+- 슬롯 배정된 스레드가 깨어나도 `_next_allowed`가 훨씬 앞에 있어 **또 sleep** → 무한 재sleep → 기아(starvation)
+- **수정**: `while True` 제거. 슬롯 배정 후 1회만 sleep.
+
+```python
+def acquire(self) -> None:
+    with self._lock:
+        now = time.monotonic()
+        if now >= self._next_allowed:
+            self._next_allowed = now + self._interval
+            return
+        wait = self._next_allowed - now
+        self._next_allowed += self._interval
+    time.sleep(wait)  # 락 밖에서 1회만 대기, 루프 없음
 ```
 
 ### 빌링 계정 OPEN/CLOSED 선제 조회
@@ -102,6 +118,24 @@ def _deletable(billing_enabled: str, billing_account_id: str, owners: list[str],
 
 **핵심**: `billing_account_id`가 있으면 `billing_enabled=False`여도 CLOSED 상태의 빌링 계정이 연결된 것이므로
 "즉시 삭제 가능"으로 분류하면 안 된다.
+
+### Stage 4 실패 프로젝트 재시도
+`_check_billing` / `_get_owners`는 일시적 예외로 3회 모두 실패한 경우에만 `_failed=True` / `_OWNERS_FAILED` sentinel 반환.
+Stage 4는 이 경우만 재시도 → 빌링 미연결 프로젝트(~700개) 전체 재시도 방지.
+
+```python
+# _check_billing 반환 예시
+{"billing_enabled": "False", "billing_account_id": "", "_failed": True}   # 일시적 오류
+{"billing_enabled": "False", "billing_account_id": "", "_failed": False}  # 정상 응답
+
+# _get_owners 반환 예시
+[]              # 정상 응답 (소유자 없음 포함)
+_OWNERS_FAILED  # 일시적 오류 sentinel
+
+# Stage 4 필터링
+failed_billing = [pid for pid, v in billing_map.items() if v.get("_failed")]
+failed_owners  = [pid for pid, v in owner_map.items() if v is _OWNERS_FAILED]
+```
 
 ### 스캔 결과 필드
 
@@ -205,11 +239,19 @@ EC2에 `No module named 'cryptography'` 오류가 발생하므로 반드시 `cur
 
 ---
 
-## 해결한 주요 버그
+## 해결한 주요 버그 (최신순)
+
+### 7. Stage 4가 ~700개 프로젝트를 불필요하게 재시도하는 문제
+- **원인**: `failed_billing = [pid for pid, v in billing_map.items() if billing_enabled==False and no billing_account_id]` → 정상적으로 빌링 미연결인 프로젝트까지 모두 재시도
+- **해결**: `_check_billing` 반환 dict에 `_failed` 플래그, `_get_owners` 반환에 `_OWNERS_FAILED` sentinel 추가. Stage 4는 실제 일시적 오류만 재시도.
+
+### 8. EC2에서 스캔이 1/780에서 멈추는 문제 (_TokenBucketLimiter starvation)
+- **원인**: `acquire()`의 `while True` 루프 — 200개 스레드 동시 호출 시 각 스레드가 `_next_allowed`를 앞으로 밀어, 슬롯을 배정받은 스레드가 깨어나도 또 sleep → 무한 재sleep → 사실상 1개 스레드만 실행
+- **해결**: `while True` 제거. 슬롯 배정 후 락 밖에서 1회만 sleep.
 
 ### 1. 스캔 10분 걸리는 문제
 - **원인**: gRPC 클라이언트가 `RESOURCE_EXHAUSTED` (quota 초과)에 대해 자동 재시도 최대 600초
-- **해결**: 모든 API 호출에 `retry=None, timeout=15` 추가 + Semaphore로 동시 요청 수 제한
+- **해결**: 모든 API 호출에 `retry=None, timeout=15` 추가 + Semaphore → TokenBucketLimiter(500)으로 교체
 
 ### 2. OPEN/CLOSED 표시 안 되는 문제
 - **원인**: `list_billing_accounts()`를 Stage 2 이후에 호출 → 이미 quota 소진 → 조회 실패
